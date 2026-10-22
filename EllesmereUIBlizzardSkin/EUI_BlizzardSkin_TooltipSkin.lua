@@ -544,6 +544,106 @@ local FFD, GetFFD = I.FFD, I.GetFFD
         return guid, token
     end
 
+    do
+        local installed = false
+        EllesmereUI._applyTooltipUnitDetails = function()
+            local db = EllesmereUIDB
+            if installed or not _enabled() or not db
+                or not db.tooltipShowRarity then return end
+            if EllesmereUI.BlizzSkinPadStandDown() then return end
+            installed = true
+            local levelLine, levelText
+
+            local function plainText(text)
+                if _isSecret and _isSecret(text) then return nil end
+                if type(text) ~= "string" then return nil end
+                return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+            end
+            local function formatPattern(format)
+                return "^" .. format:gsub("%%(%d*)%$?[sd]", "\001")
+                    :gsub("(%W)", "%%%1"):gsub("%%\001", ".+") .. "$"
+            end
+            local levelPatterns = {
+                formatPattern(TOOLTIP_UNIT_LEVEL), formatPattern(TOOLTIP_UNIT_LEVEL_TYPE),
+                formatPattern(TOOLTIP_UNIT_LEVEL_RACE), formatPattern(TOOLTIP_UNIT_LEVEL_RACE_TYPE),
+            }
+            local function isLevelLine(line)
+                if not canaccesstable(line) or (_isSecret and _isSecret(line.type)) then return false end
+                if line.type == Enum.TooltipDataLineType.UnitLevel then return true end
+                if line.type ~= Enum.TooltipDataLineType.None then return false end
+                local text = plainText(line.leftText)
+                if not text then return false end
+                -- Some unit tooltips mark their level lines as generic text.
+                for _, pattern in ipairs(levelPatterns) do
+                    if text:match(pattern) then return true end
+                end
+                return false
+            end
+            local function replaceLabel(text, label, replacement)
+                local first, last = text:find("(" .. label .. ")", 1, true)
+                if not first then first, last = text:lower():find("(" .. label:lower() .. ")", 1, true) end
+                if first then
+                    return text:sub(1, first) .. replacement .. text:sub(last)
+                end
+            end
+            local function prepare(tt, data)
+                if not canaccesstable(data) or not canaccesstable(data.lines) then return end
+                local _, unit = _resolveTipIdentity(tt, data)
+                if not unit then return end
+                for _, line in ipairs(data.lines) do
+                    if isLevelLine(line) then
+                        if not plainText(line.leftText) then return end
+                        if not canaccessallvalues(line.leftColor, line.wrapText, line.leftOffset) then return end
+                        if _isSecret and _isSecret(line.rightText) then return end
+                        if line.rightText and line.rightText ~= "" then return end
+                        levelLine = line
+                        break
+                    end
+                end
+                if not levelLine then return end
+                local classification = UnitClassification(unit)
+                if _isSecret and _isSecret(classification) then return end
+                local label
+                if classification == "rareelite" then
+                    label = EllesmereUI.L("Rare Elite")
+                elseif classification == "rare" then
+                    label = EllesmereUI.L("Rare")
+                else
+                    return
+                end
+                local text = levelLine.leftText
+                if text:find("(" .. label .. ")", 1, true) then return end
+                levelText = replaceLabel(text, ELITE, label)
+                    or replaceLabel(text, EllesmereUI.L("Rare"), label)
+                    or (text .. " (" .. label .. ")")
+            end
+            TooltipDataProcessor.AddTooltipPreCall(Enum.TooltipDataType.Unit, function(tt, data)
+                if tt ~= _GameTooltip then return end
+                levelLine, levelText = nil, nil
+                local settings = EllesmereUIDB
+                if not _enabled() or not settings
+                    or not settings.tooltipShowRarity
+                    or tt:IsForbidden() or not _ttUsable(tt) then return end
+                -- Restricted unit data leaves Blizzard's original lines intact.
+                if not pcall(prepare, tt, data) then
+                    levelLine, levelText = nil, nil
+                end
+            end)
+            TooltipDataProcessor.AddLinePreCall(TooltipDataProcessor.AllTypes, function(tt, line)
+                local settings = EllesmereUIDB
+                if not settings or not _enabled()
+                    or not settings.tooltipShowRarity
+                    or tt ~= _GameTooltip or tt:IsForbidden() then return end
+                if _isSecret and _isSecret(line) then return end
+                if line == levelLine and levelText then
+                    -- Render our text without changing Blizzard's shared line data.
+                    return pcall(GameTooltip_AddColoredLine, tt, levelText,
+                        line.leftColor or NORMAL_FONT_COLOR, line.wrapText or false, line.leftOffset)
+                end
+            end)
+        end
+    end
+
     -- "Targeting" line: who the hovered unit targets. Opt-in (default off). Needs a
     -- live unit token to build the relational target token, so hovers resolving only
     -- a GUID (our raid/party frames) skip it; identity-secret targets are skipped
@@ -888,6 +988,7 @@ local FFD, GetFFD = I.FFD, I.GetFFD
     -- so disabling the reskin stops every tooltip option too. Idempotent: safe for the live re-apply path to call again.
     local _ttDataInited = false
     local function _ttInitData()
+        EllesmereUI._applyTooltipUnitDetails()
         if _ttDataInited then return end
         _ttDataInited = true
         -- Clear the recorded identity on hide so a late inspect result can never append to a closed/switched tooltip. HookScript (never SetScript) keeps the secure OnHide handler intact.
