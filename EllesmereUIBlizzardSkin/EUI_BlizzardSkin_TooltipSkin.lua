@@ -645,6 +645,16 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                 if not canaccesstable(data) or not canaccesstable(data.lines) then return end
                 local unit = tooltipUnit(tt, data)
                 if not unit then return end
+                local classification = UnitClassification(unit)
+                if _isSecret and _isSecret(classification) then return end
+                local label
+                if classification == "rareelite" then
+                    label = EllesmereUI.L("Rare Elite")
+                elseif classification == "rare" then
+                    label = EllesmereUI.L("Rare")
+                else
+                    return
+                end
                 for _, line in ipairs(data.lines) do
                     if isLevelLine(line) then
                         levelLine = line
@@ -658,16 +668,6 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                 local publicColor = canaccessallvalues(levelLine.leftColor)
                 if not publicColor and not (_isSecret and _isSecret(levelLine.leftText)) then return end
                 levelColor = publicColor and (levelLine.leftColor or NORMAL_FONT_COLOR) or HIGHLIGHT_FONT_COLOR
-                local classification = UnitClassification(unit)
-                if _isSecret and _isSecret(classification) then return end
-                local label
-                if classification == "rareelite" then
-                    label = EllesmereUI.L("Rare Elite")
-                elseif classification == "rare" then
-                    label = EllesmereUI.L("Rare")
-                else
-                    return
-                end
                 local text = levelLine.leftText
                 if _isSecret and _isSecret(text) then
                     -- Rebuild from public unit data without inspecting the restricted text.
@@ -694,7 +694,7 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                     levelLine, levelText, levelColor = nil, nil, nil
                 end
             end)
-            TooltipDataProcessor.AddLinePreCall(TooltipDataProcessor.AllTypes, function(tt, line)
+            local function renderLevelLine(tt, line)
                 local settings = EllesmereUIDB
                 if not settings or not _enabled()
                     or not settings.tooltipShowRarity
@@ -705,7 +705,9 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                     return pcall(GameTooltip_AddColoredLine, tt, levelText,
                         levelColor or NORMAL_FONT_COLOR, line.wrapText or false, line.leftOffset)
                 end
-            end)
+            end
+            TooltipDataProcessor.AddLinePreCall(Enum.TooltipDataLineType.None, renderLevelLine)
+            TooltipDataProcessor.AddLinePreCall(Enum.TooltipDataLineType.UnitLevel, renderLevelLine)
         end
     end
 

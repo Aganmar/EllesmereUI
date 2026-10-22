@@ -36,6 +36,7 @@ local function Fixture()
         enabled = true, usable = true,
         classification = "normal", level = 15, registrations = 0, identityCalls = 0,
         processingCalls = 0, existsCalls = 0, classificationCalls = 0, levelCalls = 0,
+        lineCallbacks = {}, lineCalls = 0, watchedRowChecks = 0,
         settings = { tooltipShowRarity = false },
     }
     f.tooltip = { rendered = {} }
@@ -66,6 +67,9 @@ local function Fixture()
         _ttUsable = function() return f.usable end,
         _isSecret = function(value) return value == secret end,
         canaccesstable = function(value)
+            if f.watchedRow and value == f.watchedRow then
+                f.watchedRowChecks = f.watchedRowChecks + 1
+            end
             return type(value) == "table" and value ~= secret and not inaccessible[value]
         end,
         canaccessallvalues = function(...)
@@ -115,8 +119,9 @@ local function Fixture()
                 f.registrations = f.registrations + 1
             end,
             AddLinePreCall = function(kind, callback)
-                Check(kind == "all" and not f.line, "register exactly one line pre-call")
-                f.line = callback
+                Check((kind == 0 or kind == 47) and not f.lineCallbacks[kind],
+                    "register each supported level line type once")
+                f.lineCallbacks[kind] = callback
                 f.registrations = f.registrations + 1
             end,
         },
@@ -131,7 +136,9 @@ local function Fixture()
         if self.pre then self.pre(tooltip, data) end
         if data and data.lines then
             for _, line in ipairs(data.lines) do
-                if not (self.line and self.line(tooltip, line)) then
+                local callback = self.lineCallbacks[line.type]
+                if callback then self.lineCalls = self.lineCalls + 1 end
+                if not (callback and callback(tooltip, line)) then
                     tooltip.rendered[#tooltip.rendered + 1] = line
                 end
             end
@@ -169,7 +176,8 @@ Check(f.registrations == 0, "skin stand-down must install nothing")
 f.standDown = false
 f.apply()
 f.apply()
-Check(f.registrations == 2, "first enable installs callbacks once")
+Check(f.registrations == 3, "first enable installs callbacks once")
+Check(f.lineCallbacks[0] == f.lineCallbacks[47], "supported line types share one callback")
 
 local data, rendered
 for _, case in ipairs({
@@ -224,6 +232,28 @@ for _, classification in ipairs({ "normal", "elite", "worldboss", "minus" }) do
     f.classification = classification
     Unchanged(f, CreatureData(), classification .. " must remain unchanged")
 end
+for _, classification in ipairs({ "normal", "elite", "worldboss", "minus", secret }) do
+    local ordinary = Fixture()
+    ordinary.settings.tooltipShowRarity = true
+    ordinary.classification = classification
+    ordinary.apply()
+    local d = CreatureData()
+    d.lines[1].unitToken = "nameplate7"
+    ordinary.watchedRow = d.lines[2]
+    Unchanged(ordinary, d, "non-rare or restricted classification preserves all rows")
+    Check(ordinary.classificationCalls == 1 and ordinary.watchedRowChecks == 0,
+        "classification rejects non-rare or restricted units before scanning level rows")
+end
+local scoped = Fixture()
+scoped.settings.tooltipShowRarity = true
+scoped.classification = "rareelite"
+scoped.apply()
+local scopedData = CreatureData()
+scopedData.lines[3].type = 48
+table.insert(scopedData.lines, { type = 7, leftText = "Threat" })
+table.insert(scopedData.lines, { type = 41, leftText = "Skinnable" })
+scoped:Render(scopedData)
+Check(scoped.lineCalls == 1, "name, creature type, threat and error rows do not invoke our callback")
 f.classification = "rareelite"
 for _, case in ipairs({
     { "right-side level content", function(d) d.lines[2].rightText = "Useful content" end },
@@ -245,7 +275,7 @@ Unchanged(f, CreatureData(), "disabled after installation leaves original lines 
 Check(f.identityCalls == calls, "disabled setting must not resolve unit identity")
 f.settings.tooltipShowRarity = true
 f.apply()
-Check(f.registrations == 2, "re-enabling must reuse existing callbacks")
+Check(f.registrations == 3, "re-enabling must reuse existing callbacks")
 
 for _, flag in ipairs({ "forbidden", "noUnit", "identityError", "renderError" }) do
     f[flag] = true
@@ -275,7 +305,7 @@ Unchanged(f, CreatureData(), "secret classification leaves original lines intact
 f.classification = "rareelite"
 f:Render(nil)
 Check(#f.tooltip.rendered == 0, "missing tooltip data is safe")
-Check(not f.line(f.tooltip, secret), "secret line callback must be ignored")
+Check(not f.lineCallbacks[0](f.tooltip, secret), "secret line callback must be ignored")
 
 local function SecretLevelFixture(token)
     local fixture = Fixture()
