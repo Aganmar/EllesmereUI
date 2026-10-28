@@ -1,4 +1,4 @@
-if EUI_CLIENT_BLOCKED then return end if ... == "SimpleLootCouncil" and SimpleLootCouncil and SimpleLootCouncil.EDITION == "eui" then return end
+if EUI_CLIENT_BLOCKED then return end if ... == "SimpleLootCouncil" and SimpleLootCouncil and SimpleLootCouncil.EDITION == "eui" then return end if (select(2, ...)).slcInert then return end
 
 
 
@@ -21,7 +21,8 @@ Config.MAX_TEXT = 100
 Config.MAX_RESPONSES = 7
 
 local MAX_NOTE = 255
-local MAX_WHISPER = 255
+
+Config.SESSION_LENGTH_MIN, Config.SESSION_LENGTH_MAX, Config.SESSION_LENGTH_STEP = 30, 180, 5
 
 
 function Config.CleanText(value)
@@ -36,6 +37,26 @@ function Config.CleanChannel(value)
     value = tonumber(value)
     if not value or value ~= value then return nil end
     return math.max(0, math.min(1, value))
+end
+
+
+function Config.SnapSessionLength(seconds)
+    seconds = tonumber(seconds) or 0
+    if seconds ~= seconds or seconds < Config.SESSION_LENGTH_MIN / 2 then return 0 end
+    local step = Config.SESSION_LENGTH_STEP
+    seconds = math.floor(seconds / step + 0.5) * step
+    return math.max(Config.SESSION_LENGTH_MIN, math.min(Config.SESSION_LENGTH_MAX, seconds))
+end
+
+
+function Config:SessionLength()
+    local timer = addon.db and addon.db.timer
+    if type(timer) ~= "table" or not timer.enabled then return 0 end
+    local seconds = tonumber(timer.duration) or Config.SESSION_LENGTH_MIN
+    if seconds ~= seconds then seconds = Config.SESSION_LENGTH_MIN end
+    local step = Config.SESSION_LENGTH_STEP
+    seconds = math.floor(seconds / step + 0.5) * step
+    return math.max(Config.SESSION_LENGTH_MIN, math.min(Config.SESSION_LENGTH_MAX, seconds))
 end
 
 
@@ -72,15 +93,11 @@ local function SharedResponses(list)
             or Config.CleanText(entry.t)
         local r, g, b = SharedChannel(entry.r), SharedChannel(entry.g), SharedChannel(entry.b)
         local sort = entry.s == nil and index or tonumber(entry.s)
-        local whisper = entry.w
-        if not text or not r or not g or not b or not sort or sort ~= sort
-            or whisper ~= nil and (type(whisper) ~= "string" or #whisper > MAX_WHISPER) then
+        if not text or not r or not g or not b or not sort or sort ~= sort then
             return nil
         end
         responses[index] = {
             id = "SHARED" .. index, text = text, r = r, g = g, b = b, sort = sort,
-
-            whisper = whisper,
         }
     end
 
@@ -201,16 +218,29 @@ function Config:NoteMax()
     return (shared and shared.noteMax) or (addon.db and addon.db.noteMaxLength) or 64
 end
 
+
+
+local QUEUE_MODES = { off = true, request = true, start = true }
+function Config.CleanCouncilQueue(value)
+    return QUEUE_MODES[value] and value or "off"
+end
+
+
+
 function Config:StartRequestsAllowed()
-    if shared and shared.startRequests ~= nil then return shared.startRequests end
-    return (addon.db and addon.db.allowStartRequests) and true or false
+    if shared then return shared.startRequests == true end
+    return Config.CleanCouncilQueue(addon.db and addon.db.councilQueue) ~= "off"
 end
 
 function Config:CouncilMayStartRuns()
     if not self:StartRequestsAllowed() then return false end
-
     if shared then return shared.councilMayStartRuns == true end
-    return addon.db and addon.db.councilMayStartRuns == true or false
+    return Config.CleanCouncilQueue(addon.db and addon.db.councilQueue) == "start"
+end
+
+function Config:CouncilQueueMode()
+    if not self:StartRequestsAllowed() then return "off" end
+    return self:CouncilMayStartRuns() and "start" or "request"
 end
 
 

@@ -1714,7 +1714,7 @@ local FFD, GetFFD = I.FFD, I.GetFFD
             if not popup then return end
 
             if not timerBar then
-                local timerParent = GetFFD(popup).bgFrame or dialog or popup
+                local timerParent = GetFFD(popup).bgFrame or popup
                 timerBar = CreateFrame("StatusBar", nil, timerParent)
                 timerBar:SetMinMaxValues(0, TIMER_DURATION)
 
