@@ -2067,6 +2067,7 @@ do
         "customTooltips", "tooltipFontScale", "tooltipPlayerTitles",
         "tooltipItemLevel", "tooltipMythicScore", "tooltipShowMount",
         "tooltipShowGuildRank", "tooltipShowTarget", "tooltipShowMode",
+        "tooltipShowRarity",
         "tooltipShowModifier", "tooltipGrowthDirection",
         "uberTooltips", "uberTooltipsManual", "tooltipHideHealthStrip",
         "tooltipHealthStripTexture", "tooltipHealthStripHeight",
