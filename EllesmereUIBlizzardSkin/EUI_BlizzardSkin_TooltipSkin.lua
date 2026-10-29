@@ -637,8 +637,8 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                         if count == 1 then first = line elseif count == 2 then second = line end
                     end
                 end
-                -- Observed generic layouts: [subtitle], level, creature type or corpse.
-                local line = count == 2 and first or count == 3 and second
+                -- Generic rows: level alone, level + type/corpse, or subtitle + level + type/corpse.
+                local line = (count == 1 or count == 2) and first or count == 3 and second
                 if line and _isSecret and _isSecret(line.leftText) then return line end
             end
             local function prepare(tt, data)

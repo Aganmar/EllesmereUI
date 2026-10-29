@@ -514,6 +514,56 @@ for _, classification in ipairs({ "rare", "rareelite" }) do
     end
 end
 
+local function SingleGenericFixture(getter, extras)
+    local fixture, tooltipData = CoreRowsFixture(false, false)
+    fixture.level = 46
+    table.remove(tooltipData.lines, 3)
+    if getter == "GetWorldCursor" then
+        fixture.processingInfo = { getterName = getter, tooltipData = tooltipData, append = false }
+    end
+    for _, kind in ipairs(extras) do
+        table.insert(tooltipData.lines, { type = kind, leftText = secret, leftColor = secret })
+    end
+    return fixture, tooltipData
+end
+
+-- Darkcaller: UnitName, generic level, QuestTitle (17), QuestObjective (8).
+for _, getter in ipairs({ "GetUnit", "GetWorldCursor" }) do
+    for _, classification in ipairs({ "rare", "rareelite" }) do
+        for _, extras in ipairs({ {}, { 17, 8 }, { 17, 8, 7, 41 } }) do
+            local single, td = SingleGenericFixture(getter, extras)
+            single.classification = classification
+            local output = single:Render(td)
+            local label = classification == "rare" and "Rare" or "Rare Elite"
+            Check(#output == #td.lines and output[2].leftText == "Level 46 (" .. label .. ")",
+                "single secret generic level works without a creature-type row")
+            Check(single.lastLevelUnit == (getter == "GetUnit" and "target" or "mouseover"),
+                "single generic rebuild uses the unit belonging to the tooltip")
+            for i, line in ipairs(td.lines) do
+                if i ~= 2 then Check(output[i] == line, "single generic rebuild preserves typed quest and other rows") end
+            end
+        end
+    end
+end
+
+for _, case in ipairs({
+    { "secret level", function(f) f.level = secret end },
+    { "zero level", function(f) f.level = 0 end },
+    { "boss level", function(f) f.level = -1 end },
+    { "secret classification", function(f) f.classification = secret end },
+    { "ordinary elite", function(f) f.classification = "elite" end },
+    { "missing identity", function(f) f.processingInfo.getterArgs[1] = secret end },
+    { "readable unrelated row", function(f, td) td.lines[2].leftText = "Useful content" end },
+    { "right-side content", function(f, td) td.lines[2].rightText = "Useful content" end },
+    { "restricted render metadata", function(f, td) td.lines[2].leftOffset = secret end },
+    { "typed creature row", function(f, td) table.insert(td.lines, { type = 48, leftText = secret }) end },
+    { "disabled setting", function(f) f.settings.tooltipShowRarity = false end },
+}) do
+    local invalid, td = SingleGenericFixture("GetUnit", { 17, 8 })
+    case[2](invalid, td)
+    Unchanged(invalid, td, "single generic fallback respects " .. case[1])
+end
+
 for _, terminalType in ipairs({ 48, 49 }) do
     local mixed, mixedData = CoreRowsFixture(true, terminalType == 49)
     mixedData.lines[4].type = terminalType
@@ -538,7 +588,7 @@ for _, i in ipairs({ 1, 2, 3, 4, 6, 7 }) do
 end
 
 for _, case in ipairs({
-    { "two core rows", function(td) table.remove(td.lines) end },
+    { "no generic rows", function(td) table.remove(td.lines); table.remove(td.lines) end },
     { "five core rows", function(td)
         table.insert(td.lines, { type = 0, leftText = secret })
         table.insert(td.lines, { type = 0, leftText = secret })
