@@ -36,7 +36,7 @@ function ns.UFO_EditCustomText(prefix, db, unit, onSave)
     elseif db[prefix .. "ClassColor"] then
         if unit == "player" then
             local _, cls = UnitClass("player")
-            color = cls and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[cls]
+            color = cls and EllesmereUI.GetClassColor(cls)
         else
             color = { r = 0.9, g = 0.3, b = 0.3 }
         end
@@ -77,8 +77,8 @@ function ns.UFO_RefreshMenus(...)
 end
 
 -- The power text cog (Main and Boss): Show % for the preset formats in pctOff's
--- complement; Custom writes its own %, so it keeps only the Name Format (WoW
--- Forever, whose rows carry it), and only while the format shows a name.
+-- complement; Custom writes its own %, so it keeps only the Name Format, and
+-- only while the format shows a name.
 local PCT_TIP = "This option is only available for formats that display a percentage."
 function ns.UFO_PowerTextCog(get, set, pctOff, setShowPct)
     local rows = ns.UF_NameFormatRows("powerText", "perpp", get, set, {
@@ -88,18 +88,17 @@ function ns.UFO_PowerTextCog(get, set, pctOff, setShowPct)
           get=function() return get("powerShowPercent", true) ~= false end,
           set=setShowPct },
     }, "powerTextFormat")
-    local hasName = #rows > 1
     return {
         title = "Power Text", rows = rows,
         disabled = function()
             local fmt = get("powerTextFormat", "perpp")
             if fmt == "custom" then
-                return not (hasName and ns.UF_ContentShowsName(fmt, get("powerTextCustomFormat")))
+                return not ns.UF_ContentShowsName(fmt, get("powerTextCustomFormat"))
             end
             return pctOff[fmt] == true
         end,
         disabledTooltip = function()
-            if hasName and get("powerTextFormat", "perpp") == "custom" then
+            if get("powerTextFormat", "perpp") == "custom" then
                 return "This option only applies when the text shows a name."
             end
             return PCT_TIP

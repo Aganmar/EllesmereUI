@@ -76,9 +76,11 @@ initFrame:SetScript("OnEvent", function(self)
     local pcall = pcall
     local pairs = pairs
 
-    -- Preview font setter: mirrors SetFSFont shadow logic for direct SetFont calls
+    -- Preview font setter: the plates' own font families (SetFSFont), so a
+    -- preview name, title or cast target draws as on a live plate. Every font
+    -- write to a preview text goes through it, never a plain SetFont.
     local function SetPVFont(fs, fontPath, size, flags)
-        EllesmereUI.ApplyModuleFont(fs, fontPath, size, "nameplates", flags)
+        EllesmereUI.ApplyModuleFontFamily(fs, fontPath, size, "nameplates", flags)
     end
     local floor = math.floor
     local NAME_RAID_MARKER_GAP = 3
@@ -126,6 +128,8 @@ initFrame:SetScript("OnEvent", function(self)
     --  Refresh helpers
     ---------------------------------------------------------------------------
     local function RefreshAllPlates()
+        -- Color Casting Enemies repaints its tint colors (its swatches, Modify Out of Combat).
+        if ns.NP_CastTintsDirty then ns.NP_CastTintsDirty() end
         for _, plate in pairs(plates) do
             plate:UpdateHealth()
         end
@@ -186,6 +190,7 @@ initFrame:SetScript("OnEvent", function(self)
     -- Raid marker hidden by default, toggled via eye icon; optState fields so both the preview and the Display page can access them.
     optState.showRaidMarkerPreview = false
     optState.showClassificationPreview = false
+    optState.showQuestTextPreview = false
     optState.showTargetGlowPreview = false
     optState.showAbsorbPreview = false
 
@@ -216,10 +221,10 @@ initFrame:SetScript("OnEvent", function(self)
     EllesmereUI:RegisterOnShow(UpdatePreview)
 
     ---------------------------------------------------------------------------
-    --  Glow sites: the Dispel, Pandemic and Important Cast glows as shared glow
+    --  Glow sites: the Dispel, Pandemic, Important Cast and Cast Targets You glows as shared glow
     --  descriptors, used by the page rows and the Global Settings Glows page.
     ---------------------------------------------------------------------------
-    local npDispelGlowDesc, npImpCastGlowDesc, npPandemicGlowDesc
+    local npDispelGlowDesc, npImpCastGlowDesc, npPandemicGlowDesc, npCastTargetGlowDesc
     do
         local GO = EllesmereUI.GlowOptions
         -- The aura glows (Dispel, Pandemic) share one refresh, so the Glows
@@ -273,35 +278,40 @@ initFrame:SetScript("OnEvent", function(self)
                   end },
             },
         }
-        -- The cast bar is a bar host (no Shape).
-        npImpCastGlowDesc = {
-            view = ns.NP_GLOW_VIEW, host = "bar",
-            caps = { mode = true, params = true, bg = true },
-            defaultColor = { r = 1, g = 0.2, b = 0.2 },
-            isOff = function()
-                local d = DB()
-                local on = d and d.importantCastGlow
-                if on == nil then on = defaults.importantCastGlow end
-                return not on
-            end,
-            onChange = RefreshAllPlates,
-            get = function(f)
-                local d = DB()
-                if f == "style" then return d.importantCastGlowStyle or defaults.importantCastGlowStyle or 1
-                elseif f == "mode" then return d.importantCastGlowColorMode or "custom"
-                end
-                return EllesmereUI.GlowOptions.FlatGet(d, "importantCastGlow", f, defaults)
-            end,
-            set = function(f, a, b2, c2)
-                local d = DB()
-                if f == "style" then
-                    if a == 0 then d.importantCastGlow = false
-                    else d.importantCastGlow = true; d.importantCastGlowStyle = a end
-                elseif f == "mode" then d.importantCastGlowColorMode = a
-                else EllesmereUI.GlowOptions.FlatSet(d, "importantCastGlow", f, a, b2, c2)
-                end
-            end,
-        }
+        -- The cast bar glows (flat <prefix>* keys, on/off in <prefix>): the cast bar is a
+        -- bar host (no Shape). An edit reaches the casts already showing.
+        local function RefreshCastGlows()
+            if ns.NP_RefreshCastGlows then ns.NP_RefreshCastGlows() end
+        end
+        local function CastBarGlowDesc(prefix)
+            local k = EllesmereUI.Glows.FlatKeys(prefix)
+            return {
+                view = ns.NP_GLOW_VIEW, host = "bar",
+                caps = { mode = true, params = true, bg = true },
+                defaultColor = defaults[k.color],
+                isOff = function() return DBVal(prefix) ~= true end,
+                onChange = RefreshCastGlows,
+                get = function(f)
+                    local d = DB()
+                    if f == "style" then return d[k.style] or defaults[k.style] or 1
+                    elseif f == "mode" then return d[k.mode] or "custom"
+                    end
+                    return GO.FlatGet(d, prefix, f, defaults)
+                end,
+                set = function(f, a, b2, c2)
+                    local d = DB()
+                    if f == "style" then
+                        if a == 0 then d[prefix] = false
+                        else d[prefix] = true; d[k.style] = a end
+                    elseif f == "mode" then d[k.mode] = a
+                    else GO.FlatSet(d, prefix, f, a, b2, c2)
+                    end
+                end,
+            }
+        end
+        npImpCastGlowDesc = CastBarGlowDesc("importantCastGlow")
+        -- Casts targeting the player (off by default).
+        npCastTargetGlowDesc = CastBarGlowDesc("castTargetGlow")
         -- Debuffs in their pandemic window (pandemicGlow* keys; the same mode
         -- key the CDM pandemic sync writes). An unset color mode is Custom:
         -- the swatch color this glow always drew (the profile merge fills it
@@ -340,6 +350,9 @@ initFrame:SetScript("OnEvent", function(self)
         GO.RegisterSite({ id = "np_importantcast", label = "Important Cast Glow", group = "module",
             module = "EllesmereUINameplates", page = PAGE_DISPLAY, section = SECTION_CASTBAR,
             highlight = "Important Cast Glow", desc = npImpCastGlowDesc })
+        GO.RegisterSite({ id = "np_casttarget", label = "Cast Targets You Glow", group = "module",
+            module = "EllesmereUINameplates", page = PAGE_DISPLAY, section = SECTION_CASTBAR,
+            highlight = "Cast Targets You Glow", desc = npCastTargetGlowDesc })
     end
 
     ---------------------------------------------------------------------------
@@ -436,6 +449,9 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         local function SetElementAtPosition(pos, element)
+            -- The Quest Objective Text view reads the Rare/Quest slot and its Quest
+            -- half: fix its own keys before either can move.
+            ns.NP_MaterializeQuestText(DB())
             if element == "none" then
                 -- Clear: find whatever element is at this position and move it to "none"
                 local db = DB()
@@ -444,6 +460,7 @@ initFrame:SetScript("OnEvent", function(self)
                         db[key] = "none"
                     end
                 end
+                if ns.NP_GetQuestTextSlot(db) == pos then db.questTextSlot = "none" end
                 return
             end
             -- "Debuffs + CC" rides the debuff slot key; the two entries differ only by debuffIncludeCC.
@@ -608,13 +625,17 @@ initFrame:SetScript("OnEvent", function(self)
             return nil
         end
 
-        -- Resolve a dynamic click mapping for icon elements Core Positions row
-        local function ResolveCoreMapping(element)
-            local pos = FindCorePosForElement(element)
-            if not pos then return { section = coreHeader, target = coreRow1 } end
+        -- Resolve a dynamic click mapping to the Core Positions row of a position
+        -- (the first row while the element sits in none)
+        local function ResolveCorePos(pos)
+            if not pos or pos == "none" then return { section = coreHeader, target = coreRow1 } end
             local info = ctx.corePosToRegion[pos]
             if not info then return { section = coreHeader, target = coreRow1 } end
             return { section = coreHeader, target = info[1], slotSide = (info[2] == "_leftRegion") and "left" or "right" }
+        end
+        -- The same for the slot holding an icon element
+        local function ResolveCoreMapping(element)
+            return ResolveCorePos(FindCorePosForElement(element))
         end
 
         local clickMappings = {
@@ -653,6 +674,8 @@ initFrame:SetScript("OnEvent", function(self)
             ccIcon       = function() return ResolveCoreMapping("ccs") end,
             raidMarker   = function() return ResolveCoreMapping("raidmarker") end,
             classIcon    = function() return ResolveCoreMapping("classification") end,
+            -- The Quest Objective Text's effective slot.
+            questText    = function() return ResolveCorePos(ns.NP_GetQuestTextSlot(DB())) end,
             -- Combined with Rare/Quest, the badge's settings live on that row.
             factionIcon  = function()
                 if DB().classificationIncludeFaction then return ResolveCoreMapping("classification") end
@@ -887,6 +910,10 @@ initFrame:SetScript("OnEvent", function(self)
             if pv._factionIcon then
                 pv._factionOverlay = CreateHitOverlay(pv._factionIcon, "factionIcon")
                 pv._factionOverlay:SetShown(pv._factionIcon:IsShown())
+            end
+            -- Quest Objective Text sample (its child, so it shows and hides with it)
+            if pv._questTextFrame then
+                CreateHitOverlay(pv._questTextFrame, "questText")
             end
             -- Class resource pips wrapper button spanning all visible pips
             local cpOverlay
@@ -1143,7 +1170,7 @@ initFrame:SetScript("OnEvent", function(self)
         LazyColorPreviewBar = LazyColorPreviewBar, NAME_RAID_MARKER_GAP = NAME_RAID_MARKER_GAP,
         NextCastFill = NextCastFill, NextCastIcon = NextCastIcon,
         npDispelGlowDesc = npDispelGlowDesc, npImpCastGlowDesc = npImpCastGlowDesc,
-        npPandemicGlowDesc = npPandemicGlowDesc,
+        npPandemicGlowDesc = npPandemicGlowDesc, npCastTargetGlowDesc = npCastTargetGlowDesc,
         optState = optState, pairs = pairs, pcall = pcall, plates = plates, PP = PP,
         RandomizePreviewValues = RandomizePreviewValues, RefreshAllAuras = RefreshAllAuras,
         RefreshAllPlates = RefreshAllPlates, SECTION_AURA = SECTION_AURA,

@@ -25,12 +25,69 @@ I.categoryIndexSetters[#I.categoryIndexSetters + 1] = function(v) selectedCatego
 -------------------------------------------------------------------------------
 --  UI Components -- Header
 -------------------------------------------------------------------------------
+-- Fits the title and item count between their start and the leftmost header icon
+-- (SyncHeaderIcons): the count truncates first, then the title, both with "...".
+function EUI_Bags:FitHeaderText()
+    local hdr, edge = self.Header, self._hdrEdge
+    if not (hdr and edge) then return end
+    local title, count = hdr.title, hdr.itemCount
+    local tl, el = title:GetLeft(), edge:GetLeft()
+    if not (tl and el) then return end
+    if hdr.slotLines then
+        hdr.slotLines[1]:Hide()
+        hdr.slotLines[2]:Hide()
+    end
+    local room = el - 12 - tl
+    local tw = title:GetUnboundedStringWidth()
+    if tw > room then
+        title:SetWidth(math.max(room, 1))
+        count:SetAlpha(0)
+        return
+    end
+    title:SetWidth(tw + 1)
+    local countRoom = room - tw - 8
+    local first, second = (count:GetText() or ""):match("^([^\n]+)\n(.+)$")
+    if first then
+        -- Each capacity line truncates independently instead of wrapping into the other.
+        if not hdr.slotLines then
+            hdr.slotLines = {}
+            for i = 1, 2 do
+                local line = hdr:CreateFontString(nil, "OVERLAY")
+                SetBagFont(line, 11)
+                line:SetWordWrap(false)
+                line:SetJustifyH("LEFT")
+                hdr.slotLines[i] = line
+            end
+        end
+        local _, size = count:GetFont()
+        local r, g, b = count:GetTextColor()
+        for i = 1, 2 do
+            local line = hdr.slotLines[i]
+            line:SetFont(count:GetFont())
+            line:SetTextColor(r, g, b, 1)
+            line:SetPoint("LEFT", title, "RIGHT", 8, i == 1 and size / 2 or -size / 2)
+            line:SetText(i == 1 and first or second)
+            line:SetWidth(math.max(math.min(line:GetUnboundedStringWidth() + 1, countRoom), 1))
+            line:SetShown(countRoom >= 16)
+        end
+        count:SetAlpha(0)
+        return
+    end
+    count:SetWidth(math.max(math.min(count:GetUnboundedStringWidth() + 1, countRoom), 1))
+    count:SetAlpha(countRoom >= 16 and 1 or 0)
+end
+
 local function CreateHeader()
     if EUI_Bags.Header then return end
+    local forever = ns.BagsForever()
     local header = CreateFrame("Frame", nil, EUI_Bags)
     header:SetPoint("TOPLEFT", 1, -1)
     header:SetPoint("TOPRIGHT", -1, -1)
-    header:SetHeight(HEADER_H)
+    if forever then
+        ns.LayoutForeverBagHeader(header)
+    else
+        header:SetHeight(HEADER_H)
+    end
     header.bg = header:CreateTexture(nil, "BACKGROUND")
     header.bg:SetAllPoints()
     header.bg:SetColorTexture(0, 0, 0, 0.5)
@@ -47,6 +104,21 @@ local function CreateHeader()
     header.itemCount:SetPoint("LEFT", header.title, "RIGHT", 8, 0)
     header.itemCount:SetTextColor(0.6, 0.6, 0.6)
 
+    -- Title and count stop short of the header icons (EUI_Bags:FitHeaderText),
+    -- refitted whenever either text, the title's spot or the header width changes.
+    header.title:SetWordWrap(false)
+    header.title:SetJustifyH("LEFT")
+    header.itemCount:SetWordWrap(false)
+    header.itemCount:SetJustifyH("LEFT")
+    if not forever then
+        local function Fit() EUI_Bags:FitHeaderText() end
+        hooksecurefunc(header.title, "SetText", Fit)
+        hooksecurefunc(header.title, "SetPoint", Fit)
+        hooksecurefunc(header.itemCount, "SetText", Fit)
+        header:HookScript("OnSizeChanged", Fit)
+        header:HookScript("OnShow", Fit)
+    end
+
     local search = CreateFrame("EditBox", "EUI_BagSearchBox", header)
     search:SetSize(160, 22)
     search:SetPoint("RIGHT", -35, 0)
@@ -56,7 +128,7 @@ local function CreateHeader()
     search.bg = search:CreateTexture(nil, "BACKGROUND")
     search.bg:SetAllPoints()
     search.bg:SetColorTexture(0.02, 0.02, 0.02, 1)
-    if EUI and EUI.PanelPP then EUI.PanelPP.CreateBorder(search, 0.25, 0.25, 0.25, 1, 1, "OVERLAY", 7) end
+    if not forever and EUI.PanelPP then EUI.PanelPP.CreateBorder(search, 0.25, 0.25, 0.25, 1, 1, "OVERLAY", 7) end
 
     local placeholder = search:CreateFontString(nil, "OVERLAY")
     SetBagFont(placeholder, 11)
@@ -72,6 +144,14 @@ local function CreateHeader()
     sort.icon:SetAllPoints()
     sort.icon:SetTexture("Interface\\AddOns\\EllesmereUIBags\\Media\\clean-up.png")
     sort.icon:SetAlpha(0.9)
+
+    if forever then
+        header.bg:Hide()
+        ns.AddForeverBagPortrait(header, "Interface\\Icons\\Inv_misc_bag_08")
+        ns.SkinForeverBagTitle(header.title, header.itemCount)
+        sort:ClearAllPoints()
+        sort:SetPoint("RIGHT", header, "TOPRIGHT", -9, header._foreverToolsY)
+    end
 
     sort:SetScript("OnEnter", function(self)
         self.icon:SetAlpha(1)
@@ -130,8 +210,24 @@ local function CreateHeader()
 
     local DoVisualSort  -- forward declaration
 
-    local function DoPhysicalSort()
-        if InCombatLockdown() then return end  -- confirm popup can outlive the pull
+    -- One physical sort at a time: a sidebar drag can unlock the button
+    -- mid-run, and a second run would take the muted sound effects for the
+    -- player's own and give them back muted.
+    local physicalActive = false
+    -- Combat ends a physical sort at its edge: PLAYER_REGEN_DISABLED comes
+    -- before the lockdown, so no item moves in combat, and the cleanup (the
+    -- sound effects back, the bags refreshed) runs while it is still allowed.
+    -- Registered only while a physical sort runs, with CVAR_UPDATE (the player
+    -- taking the muted sound effects over).
+    local sortCombatStop = CreateFrame("Frame")
+    -- Seconds a pass's item moves may take to show in a bag update before the
+    -- run counts as stuck (ArmBackstop).
+    local SORT_STUCK_AFTER = 5
+
+    -- mergeOnly (category views): consolidate partial stacks, then the visual sort.
+    local function DoPhysicalSort(mergeOnly)
+        if InCombatLockdown() or physicalActive then return end  -- confirm popup can outlive the pull
+        physicalActive = true
         LockSort()
         EUI_Bags.refreshEnabled = false
 
@@ -144,6 +240,35 @@ local function CreateHeader()
             PlaySound(SOUNDKIT.UI_BAG_SORTING_01, "Master")
         end
         EllesmereUI.HoldCVar("Sound_EnableSFX", "0", "EllesmereUIBags")
+        -- The player changed the sound effects while they were muted: the
+        -- mute ends where it stands, and the run gives nothing back.
+        local tookOver = false
+
+        local FinishSort  -- the run's end, below
+        -- The run's waiting callbacks check their frame's token: cleared, they
+        -- drop out. Either frame is made on first use.
+        local function StopWaiting(f)
+            if not f then return end
+            f._runToken = nil
+            f._wait = nil
+            f:UnregisterAllEvents()
+            f:SetScript("OnEvent", nil)
+        end
+        -- Fail-open backstop: a pass whose moves all fail (an item locked
+        -- elsewhere: a mail attachment, the auction house, a trade) brings no
+        -- bag update, and the run would wait for good, the bags frozen and the
+        -- sound effects muted. A wait with no update SORT_STUCK_AFTER seconds
+        -- on ends the run as finished; a sort cut short can simply run again.
+        local function ArmBackstop(f, token)
+            local wait = {}
+            f._wait = wait
+            C_Timer.After(SORT_STUCK_AFTER, function()
+                if f._runToken ~= token or f._wait ~= wait then return end
+                StopWaiting(consolidateFrame)
+                StopWaiting(retryFrame)
+                FinishSort()
+            end)
+        end
 
         -----------------------------------------------------------------------
         --  Phase 1: consolidate partial stacks (smallest onto largest of the same itemID; the engine performs the combine).
@@ -226,14 +351,17 @@ local function CreateHeader()
             local runToken = {}
             consolidateFrame._runToken = runToken
             consolidateFrame:RegisterEvent("BAG_UPDATE")
+            ArmBackstop(consolidateFrame, runToken)
             consolidateFrame:SetScript("OnEvent", function(self)
                 if self._runToken ~= runToken then return end
+                self._wait = nil
                 self:UnregisterAllEvents()
                 consolidateRetry = consolidateRetry + 1
                 C_Timer.After(0.15, function()
                     if consolidateFrame._runToken ~= runToken then return end
                     if consolidateRetry < 30 and DoOnePass() then
                         self:RegisterEvent("BAG_UPDATE")
+                        ArmBackstop(self, runToken)
                     else
                         self:SetScript("OnEvent", nil)
                         onDone()
@@ -356,8 +484,20 @@ local function CreateHeader()
             return #moves > 0
         end
 
-        local function FinishSort()
-            EllesmereUI.ReleaseCVar("Sound_EnableSFX", sfxWas, "EllesmereUIBags")
+        -- combat: ended at the combat edge, so the bags refresh at once, still
+        -- outside the lockdown; the button waits out combat (ApplySortEnabled).
+        FinishSort = function(combat)
+            physicalActive = false
+            sortCombatStop:UnregisterAllEvents()
+            if not tookOver then
+                EllesmereUI.ReleaseCVar("Sound_EnableSFX", sfxWas, "EllesmereUIBags")
+            end
+            if combat then
+                EUI_Bags.refreshEnabled = true
+                EUI_Bags:RefreshInventory()
+                C_Timer.After(3, UnlockSort)
+                return
+            end
             C_Timer.After(0.3, function()
                 EUI_Bags.refreshEnabled = true
                 EUI_Bags:RefreshInventory()
@@ -374,8 +514,10 @@ local function CreateHeader()
             local runToken = {}
             retryFrame._runToken = runToken
             retryFrame:RegisterEvent("BAG_UPDATE")
+            ArmBackstop(retryFrame, runToken)
             retryFrame:SetScript("OnEvent", function(self)
                 if self._runToken ~= runToken then return end
+                self._wait = nil
                 self:UnregisterAllEvents()
                 retryCount = retryCount + 1
                 C_Timer.After(0.15, function()
@@ -383,6 +525,7 @@ local function CreateHeader()
                     local moved = ComputeAndExecute(bagMin, bagMax)
                     if moved and retryCount < 15 then
                         self:RegisterEvent("BAG_UPDATE")
+                        ArmBackstop(self, runToken)
                     else
                         self:SetScript("OnEvent", nil)
                         onDone()
@@ -401,10 +544,31 @@ local function CreateHeader()
             end)
         end
 
-        ConsolidateStacks(RunSort)
+        -- Registered after the mute (CVAR_UPDATE is synchronous: the mute's own
+        -- write is never heard, nor, past FinishSort's unregister, the
+        -- release's) and before the first pass, which can finish the whole run
+        -- at once.
+        sortCombatStop:SetScript("OnEvent", function(_, event, cvar)
+            if event == "CVAR_UPDATE" then
+                if type(cvar) == "string" and cvar:lower() == "sound_enablesfx" then
+                    tookOver = true
+                    sortCombatStop:UnregisterEvent("CVAR_UPDATE")
+                    EllesmereUI.DropHold("Sound_EnableSFX", "EllesmereUIBags")
+                end
+                return
+            end
+            StopWaiting(consolidateFrame)
+            StopWaiting(retryFrame)
+            FinishSort(true)
+        end)
+        sortCombatStop:RegisterEvent("PLAYER_REGEN_DISABLED")
+        sortCombatStop:RegisterEvent("CVAR_UPDATE")
+        -- mergeOnly: the display sort saves its order and FinishSort refreshes the bags.
+        ConsolidateStacks(mergeOnly and function() DoVisualSort(true); FinishSort() end or RunSort)
     end
 
-    DoVisualSort = function()
+    -- skipRefresh: the caller refreshes the bags (a category sort's merge run).
+    DoVisualSort = function(skipRefresh)
         -- Sort items per category and save the order
         local cats = EUI_CategoryManager:GetCategories()
         local tempItems = {}
@@ -463,7 +627,7 @@ local function CreateHeader()
             end
         end
 
-        EUI_Bags:RefreshInventory()
+        if not skipRefresh then EUI_Bags:RefreshInventory() end
         LockSort()
         C_Timer.After(3, UnlockSort)
     end
@@ -522,10 +686,16 @@ local function CreateHeader()
                     end,
                 })
             end
-        else
-            -- Sound here, not in DoVisualSort: the first-open auto sort stays silent.
+        elseif InCombatLockdown() then
+            -- Merging moves items, so in combat only the display sort runs. Sound
+            -- here, not in DoVisualSort: the first-open auto sort stays silent.
             PlaySound(SOUNDKIT.UI_BAG_SORTING_01)
             DoVisualSort()
+        else
+            -- Partial stacks merge first, then the display sort. The run plays the
+            -- sort sound itself, on Master: its sound effects mute would cut a
+            -- sound played here short.
+            DoPhysicalSort(true)
         end
     end)
     EUI_Bags._doVisualSort = DoVisualSort
@@ -569,6 +739,7 @@ local function CreateHeader()
     clear.tex:SetText("x")
     clear.tex:SetPoint("CENTER", 0, 1)
     clear.tex:SetTextColor(0.8, 0.8, 0.8)
+    if forever then ns.SkinForeverBagSearch(search, search.bg, placeholder, clear) end
     clear:Hide()
     clear:SetScript("OnClick", function() search:SetText(""); search:ClearFocus(); EUI_Bags.ClearSearch() end)
 
@@ -597,6 +768,9 @@ local function CreateHeader()
     close.icon:SetAlpha(0.7)
     close:SetScript("OnEnter", function() close.icon:SetAlpha(0.9) end)
     close:SetScript("OnLeave", function() close.icon:SetAlpha(0.7) end)
+    if forever then
+        ns.PositionForeverBagClose(close)
+    end
     close:SetScript("OnClick", function()
         EUI_Bags:Hide()
         EUI_BagsReagent:Hide()
@@ -613,13 +787,15 @@ local function CreateHeader()
     end
 
     -- Bottom-edge separator (1px physical pixel)
-    local PP = EUI and EUI.PP
-    local px = (PP and PP.mult) or 1
-    local hdrSep = header:CreateTexture(nil, "ARTWORK")
-    hdrSep:SetHeight(px)
-    hdrSep:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
-    hdrSep:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, 0)
-    hdrSep:SetColorTexture(0.15, 0.15, 0.15, 1)
+    if not forever then
+        local PP = EUI and EUI.PP
+        local px = (PP and PP.mult) or 1
+        local hdrSep = header:CreateTexture(nil, "ARTWORK")
+        hdrSep:SetHeight(px)
+        hdrSep:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
+        hdrSep:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, 0)
+        hdrSep:SetColorTexture(0.15, 0.15, 0.15, 1)
+    end
 
     EUI_Bags.Header = header
     EUI_Bags._bagsBtn = bagsBtn

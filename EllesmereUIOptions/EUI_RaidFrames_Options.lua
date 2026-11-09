@@ -65,7 +65,7 @@ function ns.RF_OptMoveFramesButton(row, rgn, opts)
     local bbg = btn:CreateTexture(nil, "BACKGROUND")
     bbg:SetAllPoints()
     bbg:SetColorTexture(0.077, 0.068, 0.058, 0.92)
-    EllesmereUI.MakeBorder(btn, 1, 1, 1, 0.25)
+    EllesmereUI.MakeRoundedBorder(btn, 1, 1, 1, 0.25, bbg)
     local lbl = btn:CreateFontString(nil, "OVERLAY")
     EllesmereUI.ApplyModuleFont(lbl, nil, 13, "raidFrames")
     lbl:SetPoint("CENTER", btn, "CENTER", 0, 0)
@@ -171,7 +171,8 @@ function ns.RF_BuildPartyPortrait(parent, y, W, PSSet)
 
     -- Row 1: Portrait Mode | Art Style. A mode change can widen the frame
     -- (the full party pass) and shows or hides the rows below (a rebuild).
-    _, h = W:DualRow(parent, y,
+    local modeRow
+    modeRow, h = W:DualRow(parent, y,
         ns.RF_PartyKitGate({ type="dropdown", text="Portrait Mode",
           tooltip="Attached widens each frame by the portrait.",
           values={ none = "None", attached = "Attached", detached = "Detached" },
@@ -227,6 +228,36 @@ function ns.RF_BuildPartyPortrait(parent, y, W, PSSet)
               SetArt(v)
               RunWidgetRefresh()
           end });  y = y - h
+    -- Portrait Settings (Detached only): Clickable Portrait, Background Color.
+    EllesmereUI.BuildInlineCog(modeRow._leftRegion, {
+        title = "Portrait Settings",
+        disabled = function() return kit or PV("partyPortraitStyle", "none") ~= "detached" end,
+        disabledTooltip = function()
+            if kit then return "Frame Style: Party Frames" end
+            return "This option requires Portrait Mode to be set to Detached."
+        end,
+        rawTooltip = function() return not kit end,
+        requireState = "disabled",
+        rows = {
+            { type="toggle", label="Clickable Portrait",
+              tooltip="Clicking or hovering the detached portrait acts like clicking or hovering the frame's bars.",
+              get=function() return PV("partyPortraitClickable", false) end,
+              set=function(v) PtSet("partyPortraitClickable", v or nil) end },
+            { type="colorpicker", label="Background Color", hasAlpha=true,
+              tooltip="Fill color behind the detached portrait.",
+              disabled=function() return PV("partyPortraitShape", "portrait") == "none" end,
+              disabledTooltip="This option requires a Shape other than None.",
+              rawTooltip=true,
+              get=function()
+                  local c = db.profile.partyPortraitBgColor
+                  if c then return c.r, c.g, c.b, c.a or 1 end
+                  return 0.1, 0.1, 0.1, 1
+              end,
+              set=function(r, g, b, a)
+                  PtSet("partyPortraitBgColor", { r = r, g = g, b = b, a = a or 1 })
+              end },
+        },
+    })
 
     if kit or PV("partyPortraitStyle", "none") == "none" then return y end
 
@@ -289,7 +320,7 @@ function ns.RF_BuildPartyPortrait(parent, y, W, PSSet)
         { type="slider", label="Y Offset", min=-100, max=100, step=1,
           get=function() return PV("partyPortraitY", 0) end,
           set=function(v) PtSet("partyPortraitY", v) end },
-    }, icon = EllesmereUI.DIRECTIONS_ICON,
+    },
     disabled = function() return PV("partyPortraitStyle", "none") ~= "detached" end,
     disabledTooltip = "This option requires Portrait Mode to be set to Detached." })
 
@@ -583,7 +614,7 @@ function ns.RF_BuildPartyTargets(parent, y, W)
         { type="slider", label="Y Offset", min=-100, max=100, step=1,
           get=function() return PV("partyTargetOffsetY", 0) end,
           set=function(v) LaySet("partyTargetOffsetY", v) end },
-    }, icon = EllesmereUI.DIRECTIONS_ICON })
+    }})
     return y
 end
 
@@ -830,7 +861,7 @@ initFrame:SetScript("OnEvent", function(self)
             background = function(key)
                 if not key or key == "---" or key == "none" then return nil end
                 if key == "blizzardModern" then return ns.ResolveAbsorbStyleTex("striped"), modernSwatch end
-                if key == "maxHealthStripes" then return "Interface\\AddOns\\EllesmereUIRaidFrames\\Media\\striped-maxhp.png" end
+                if key == "maxHealthStripes" then return EllesmereUI.MAX_HEALTH_STRIPES_TEX end
                 return ns.ResolveAbsorbStyleTex and ns.ResolveAbsorbStyleTex(key) or nil
             end,
         }
@@ -999,7 +1030,7 @@ initFrame:SetScript("OnEvent", function(self)
             local host = CreateFrame("Frame", nil, ddCtrl)
             host:SetAllPoints(ddCtrl)
             host:SetFrameLevel(ddCtrl:GetFrameLevel() + 30)
-            EllesmereUI.PP.CreateBorder(host, gold[1], gold[2], gold[3], 0.9, 1, "OVERLAY", 7)
+            EllesmereUI.MakeRoundedBorder(host, gold[1], gold[2], gold[3], 0.9)
             host:Hide()
             if not EllesmereUI._prebuilding then
                 local e = pvModeCtrls[pvCtx]
@@ -1554,9 +1585,33 @@ initFrame:SetScript("OnEvent", function(self)
         end)
     end
 
+    -- Textured Background: the Health Bar Fill cog's row, shared with Global
+    -- Settings > Textures. read(key, default) / write(key, value): the page's own
+    -- settings access (the Textures card reads and writes the raid keys).
+    local function TexBgRowCfg(read, write)
+        local function Dark() return read("healthColorMode", "class") == "dark" end
+        return { type="toggle", label="Textured Background",
+            tooltip="Draws the bar texture on the health and power backgrounds too.",
+            disabled=function()
+                if read("healthBarTexture", "atrocity") == "none" then return true end
+                if Dark() then return not ns.RF_TexBgOpaque(nil, true) end
+                return read("healthBarOpacity", 100) < 100
+            end,
+            disabledTooltip=function()
+                if read("healthBarTexture", "atrocity") == "none" then
+                    return "This option requires a Health Bar Texture other than None."
+                end
+                if Dark() then return "This option requires a Dark Mode Fill of 100 (Global Settings > Colors)." end
+                return "This option requires a Fill Opacity of 100."
+            end,
+            get=function() return read("textureBg", false) == true end,
+            set=function(v) write("textureBg", v and true or false) end }
+    end
+
     -- Shared with the page builders under RaidFrames_Options\ (read in their
     -- prologs). Every field is final here: optState holds the mutable state.
     ns._RFO_OptEnv = {
+        TexBgRowCfg = TexBgRowCfg,
         AbbreviateNumbers = AbbreviateNumbers, absorbStyleOrder = absorbStyleOrder,
         absorbStyleValues = absorbStyleValues, allGrowthOrder = allGrowthOrder,
         BuildPreviewModeRow = BuildPreviewModeRow, BuildVisualSections = BuildVisualSections,

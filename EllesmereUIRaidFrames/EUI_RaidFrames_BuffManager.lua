@@ -775,7 +775,9 @@ local function ApplyEffectBorder(borderFrame, ind, r, g, b, a, w, h)
     local Glows = EllesmereUI.Glows
     local parent = borderFrame:GetParent()
     local baseLvl = (parent and parent:GetFrameLevel()) or borderFrame:GetFrameLevel()
-    borderFrame:SetFrameLevel(baseLvl + 11)   -- default border level (matches creation)
+    -- One under the raise (+9: solid strips +10, textured +9): over the base border,
+    -- under the hover/target/aggro raise and the text band. Matches creation.
+    borderFrame:SetFrameLevel(baseLvl + ns.LVL_RAISE - 1)
     if style == "dashed" then
         EllesmereUI.HideBorderStyle(borderFrame)
         Glows.StartProceduralAnts(borderFrame, ind.borderDashCount or 8, bw, nil, nil,
@@ -804,10 +806,10 @@ function ns.BM_ApplyEffectBorder(borderFrame, ind, r, g, b, a, w, h)
     local Glows = EllesmereUI.Glows
     if w and (ind.borderStyle or "solid") == "dashed" then
         EllesmereUI.HideBorderStyle(borderFrame)
-        -- Same +11 as the static styles (this branch returns first): otherwise the host stays at slot+1, one level BELOW the health bar (unit+2).
+        -- Same level as the static styles (this branch returns first): otherwise the host stays at slot+1, one level BELOW the health bar (unit+2).
         local parent = borderFrame:GetParent()
         local baseLvl = (parent and parent:GetFrameLevel()) or borderFrame:GetFrameLevel()
-        borderFrame:SetFrameLevel(baseLvl + 11)
+        borderFrame:SetFrameLevel(baseLvl + ns.LVL_RAISE - 1)
         Glows.StartAnimatedAnts(borderFrame, ind.borderDashCount or 8,
             ind.borderWidth or 2, nil, r, g, b, w, h, a)
         return
@@ -1021,7 +1023,7 @@ function ns.BM_CreatePreviewIndicators(f, health, PP)
 
     local effectBorder = CreateFrame("Frame", nil, f)
     effectBorder:SetAllPoints(f)
-    effectBorder:SetFrameLevel(f:GetFrameLevel() + 11)
+    effectBorder:SetFrameLevel(f:GetFrameLevel() + ns.LVL_RAISE - 1)
     effectBorder:Hide()
     if PP then PP.CreateBorder(effectBorder, 0, 1, 0, 1, 2) end
 
@@ -1279,6 +1281,7 @@ function ns.BM_ApplyPreviewIndicators(f, index, s)
                                 f._bmHCOverlay:Show()
                             elseif indType == "bgcolor" and f._bmBGOverlay then
                                 local c = ind.color or { r=0, g=1, b=0 }
+                                ns.RF_TexBgTint(f._bmBGOverlay, ns.RF_TexBgPath(s), ns.RF_IsVerticalFill(s))
                                 f._bmBGOverlay:SetColorTexture(c.r, c.g, c.b, (ind.opacity or 100) / 100)
                                 f._bmBGOverlay:Show()
                             elseif indType == "border" and f._bmEffectBorder and PP then
@@ -1764,6 +1767,8 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
     local cc = EllesmereUI.GetClassColor(previewClass)
     local mode = s.healthColorMode or "class"
     local fillTex = health:GetStatusBarTexture()
+    -- Textured Background, as on the live frames.
+    ns.RF_TexBgLayer(health, bg, ns.RF_TexBgOpaque(s, mode == "dark") and ns.RF_TexBgPath(s) or nil)
     if mode == "dark" then
         local dfr, dfg, dfb, dfa = EllesmereUI.GetDarkModeFill()
         health:SetStatusBarColor(dfr, dfg, dfb, 1)
@@ -1812,6 +1817,7 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
         pwBg:SetAllPoints()
         local pbc = (s.powerBgPowerColored and pInfo) or s.powerBgColor or { r=0, g=0, b=0 }
         local pbF = (s.powerBgPowerColored and pInfo) and EllesmereUI.GetPowerBgDarkenFactor() or 1
+        ns.RF_TexBgTint(pwBg, ns.RF_TexBgPath(s))
         pwBg:SetColorTexture(pbc.r * pbF, pbc.g * pbF, pbc.b * pbF, (s.powerBgDarkness or 70) / 100)
         -- Classic WoW UI: the stock edge and divider stand in (as live).
         if PP and ns.RF_Classic and ns.RF_Classic() then
@@ -1868,7 +1874,7 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
     local outline = (EllesmereUI.GetFontOutlineFlag("raidFrames")) or ""
     local playerName = UnitName("player") or "Player"
     if Ambiguate then playerName = Ambiguate(playerName, "short") end
-    if ns.RF_FormatName then playerName = ns.RF_FormatName(playerName, s) end
+    playerName = ns.RF_FormatName(playerName, s)
     -- Level Position "Attach to Name" (either format): the Top Name Bar shows the level too.
     local lvlAttach = ns.RF_TextNameAttach(s)
 
@@ -1889,24 +1895,17 @@ function ns.BM_BuildSimplePreview(parent, s, fontPath, PP, centerX, topY, opts)
         local tbgc = s.topNameBarBgColor or { r=17/255, g=17/255, b=17/255 }
         tnbBg:SetColorTexture(tbgc.r, tbgc.g, tbgc.b, (s.topNameBarBgOpacity or 80) / 100)
         local tnbText = tnb:CreateFontString(nil, "OVERLAY")
-        tnbText:SetFont(fontPath, s.topNameBarTextSize or 11, outline)
+        -- The player's name: a font family, with no shadow as a plain SetFont.
+        EllesmereUI.SetFontFamily(tnbText, fontPath, s.topNameBarTextSize or 11, outline, false)
         tnbText:SetWordWrap(false)
         if lvlAttach then
             tnbText:SetFormattedText(lvlAttach[1], ns._RFPreviewLevel(), playerName)
         else
             tnbText:SetText(playerName)
         end
-        local talign = s.topNameBarTextAlign or "center"
-        local tox = s.topNameBarTextOffsetX or 0
-        local toy = s.topNameBarTextOffsetY or 0
-        if talign == "left" then
-            tnbText:SetPoint("LEFT", tnb, "LEFT", 4 + tox, toy); tnbText:SetJustifyH("LEFT")
-        elseif talign == "right" then
-            tnbText:SetPoint("RIGHT", tnb, "RIGHT", -4 + tox, toy); tnbText:SetJustifyH("RIGHT")
-        else
-            tnbText:SetPoint("CENTER", tnb, "CENTER", tox, toy); tnbText:SetJustifyH("CENTER")
-        end
-        tnbText:SetJustifyV("MIDDLE")
+        -- This preview draws no role icon, so the name keeps its full width.
+        tnb._euiRoleIcon = false
+        ns.RF_PlaceTopNameText(tnbText, tnb, s)
         if (s.topNameBarTextColorMode or "class") == "custom" then
             local c = s.topNameBarTextColor or { r=1, g=1, b=1 }
             tnbText:SetTextColor(c.r, c.g, c.b)
@@ -2374,7 +2373,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                     local pbg = popup:CreateTexture(nil, "BACKGROUND")
                     pbg:SetAllPoints()
                     pbg:SetColorTexture(0.067, 0.067, 0.067, 0.95)
-                    EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.2, PP)
+                    EllesmereUI.MakeRoundedBorder(popup, 1, 1, 1, 0.2, pbg)
                     -- Click-away close (not while the dropdown's own menu is open).
                     popup:SetScript("OnShow", function(p2)
                         p2:SetScript("OnUpdate", function(m)
@@ -2413,6 +2412,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                     local cBg = cBtn:CreateTexture(nil, "BACKGROUND")
                     cBg:SetAllPoints()
                     cBg:SetColorTexture(ac.r, ac.g, ac.b, 0.8)
+                    EllesmereUI.RoundBody(cBtn, cBg)
                     local cLbl = cBtn:CreateFontString(nil, "OVERLAY")
                     EllesmereUI.PrimeFontShadow(cLbl, true)
                     cLbl:SetFont(fontPath, 12, "")
@@ -2712,6 +2712,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
         local addBg = addBtn:CreateTexture(nil, "BACKGROUND")
         addBg:SetAllPoints()
         addBg:SetColorTexture(accentColor.r, accentColor.g, accentColor.b, 0.8)
+        EllesmereUI.RoundBody(addBtn, addBg)
 
         local addLabel = addBtn:CreateFontString(nil, "OVERLAY")
         -- Drop shadow via the shadow FontObject, primed BEFORE SetFont (SetShadowOffset alone does not render).
@@ -2763,7 +2764,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                 local bg = popup:CreateTexture(nil, "BACKGROUND")
                 bg:SetAllPoints()
                 bg:SetColorTexture(0.067, 0.067, 0.067, 0.95)
-                EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.2, PP)
+                EllesmereUI.MakeRoundedBorder(popup, 1, 1, 1, 0.2, bg)
 
                 -- Auto-close when clicking outside (but not on child dropdown menus)
                 popup:SetScript("OnShow", function(p)
@@ -2975,6 +2976,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                 local cBg = cBtn:CreateTexture(nil, "BACKGROUND")
                 cBg:SetAllPoints()
                 cBg:SetColorTexture(accentColor.r, accentColor.g, accentColor.b, 0.8)
+                EllesmereUI.RoundBody(cBtn, cBg)
                 local cTx = cBtn:CreateFontString(nil, "OVERLAY")
                 cTx:SetPoint("CENTER")
                 cTx:SetFont(fontPath, 12, "")
@@ -3643,7 +3645,6 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                     return g == "UP" or g == "DOWN"
                 end
                 EllesmereUI.BuildInlineCog(rgn, {
-                    icon = EllesmereUI.DIRECTIONS_ICON,
                     title = "Position Offset",
                     rows = {
                         { type="slider", label="Offset X", min=-50, max=50, step=1,
@@ -3715,21 +3716,7 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                   setValue=function(v) ind.showStacks = v; ReloadAndUpdate() end })
             do
                 local rgn = durRow._leftRegion
-                local swatch = EllesmereUI.BuildColorSwatch(
-                    rgn, durRow:GetFrameLevel() + 3,
-                    function()
-                        local c = ind.durationTextColor or { r=1, g=1, b=1 }
-                        return c.r, c.g, c.b, 1
-                    end,
-                    function(r, g, b)
-                        ind.durationTextColor = { r=r, g=g, b=b }
-                        ReloadAndUpdate()
-                    end, false, 20)
-                swatch:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
-                rgn._lastInline = swatch
-
                 EllesmereUI.BuildInlineCog(rgn, {
-                    icon = EllesmereUI.RESIZE_ICON,
                     title = "Duration Text",
                     rows = {
                         { type="slider", label="Text Size", min=6, max=26, step=1,
@@ -3743,27 +3730,24 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                           set=function(v) ind.durationTextOffsetY = v; ReloadAndUpdate() end },
                     },
                 })
-            end
 
-            do
-                local rgn = durRow._rightRegion
                 local swatch = EllesmereUI.BuildColorSwatch(
                     rgn, durRow:GetFrameLevel() + 3,
                     function()
-                        local c = ind.stacksTextColor or { r=1, g=1, b=1 }
+                        local c = ind.durationTextColor or { r=1, g=1, b=1 }
                         return c.r, c.g, c.b, 1
                     end,
                     function(r, g, b)
-                        ind.stacksTextColor = { r=r, g=g, b=b }
+                        ind.durationTextColor = { r=r, g=g, b=b }
                         ReloadAndUpdate()
                     end, false, 20)
                 swatch:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
                 rgn._lastInline = swatch
             end
+
             do
                 local rgn = durRow._rightRegion
                 EllesmereUI.BuildInlineCog(rgn, {
-                    icon = EllesmereUI.RESIZE_ICON,
                     disabled = function() return ind.showStacks == false end,
                     disabledTooltip = "Show Stacks",
                     title = "Stacks Text",
@@ -3779,6 +3763,21 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                           set=function(v) ind.stacksOffsetY = v; ReloadAndUpdate() end },
                     },
                 })
+            end
+            do
+                local rgn = durRow._rightRegion
+                local swatch = EllesmereUI.BuildColorSwatch(
+                    rgn, durRow:GetFrameLevel() + 3,
+                    function()
+                        local c = ind.stacksTextColor or { r=1, g=1, b=1 }
+                        return c.r, c.g, c.b, 1
+                    end,
+                    function(r, g, b)
+                        ind.stacksTextColor = { r=r, g=g, b=b }
+                        ReloadAndUpdate()
+                    end, false, 20)
+                swatch:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+                rgn._lastInline = swatch
             end
             -- Display-level Icon Glow (v2): permanent, every visible icon of the
             -- group glows while shown. No Max Duration setting by design: the
@@ -3901,17 +3900,6 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                       setValue=function(v) ind.pandemicBorderEnabled = v; ReloadAndUpdate(); EllesmereUI:RefreshPage() end },
                     extraCfg)
                 local rgn = pandemicRow._leftRegion
-                EllesmereUI.BuildInlineSwatches(rgn, {
-                    { tooltip = "Pandemic Border Color",
-                      getValue = function()
-                          local c = ind.pandemicBorderColor or { r=1, g=0.2, b=0.2 }
-                          return c.r, c.g, c.b, 1
-                      end,
-                      setValue = function(r, g, b)
-                          ind.pandemicBorderColor = { r=r, g=g, b=b }
-                          ReloadAndUpdate()
-                      end },
-                }, { disabled = pandemicOff, disabledTooltip = pandemicTip, requireState = pandemicState, size = 20 })
                 EllesmereUI.BuildInlineCog(rgn, {
                     disabled = pandemicOff, disabledTooltip = pandemicTip, requireState = pandemicState,
                     title = "Pandemic Border",
@@ -3929,6 +3917,17 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                           set=function(v) ind.pandemicBorderWidth = v; ReloadAndUpdate() end },
                     },
                 })
+                EllesmereUI.BuildInlineSwatches(rgn, {
+                    { tooltip = "Pandemic Border Color",
+                      getValue = function()
+                          local c = ind.pandemicBorderColor or { r=1, g=0.2, b=0.2 }
+                          return c.r, c.g, c.b, 1
+                      end,
+                      setValue = function(r, g, b)
+                          ind.pandemicBorderColor = { r=r, g=g, b=b }
+                          ReloadAndUpdate()
+                      end },
+                }, { disabled = pandemicOff, disabledTooltip = pandemicTip, requireState = pandemicState, size = 20 })
             end
 
             -- THRESHOLD section
@@ -3967,7 +3966,6 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                 do
                     local rgn = posRow._leftRegion
                     EllesmereUI.BuildInlineCog(rgn, {
-                        icon = EllesmereUI.DIRECTIONS_ICON,
                         title = "Position Offset",
                         rows = {
                             { type="slider", label="Offset X", min=-50, max=50, step=1,
@@ -4072,7 +4070,6 @@ function ns.BM_BuildPage(pageName, parent, yOffset)
                 do
                     local rgn = posRow._leftRegion
                     EllesmereUI.BuildInlineCog(rgn, {
-                        icon = EllesmereUI.DIRECTIONS_ICON,
                         title = "Position Offset",
                         rows = {
                             { type="slider", label="Offset X", min=-50, max=50, step=1,

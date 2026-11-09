@@ -232,7 +232,7 @@ local function BuildBattleResPage(pageName, parent, yOffset)
                       get=function() return Cfg(yKey) or 0 end,
                       set=function(v) Set(yKey, v); Refresh() end },
                 },
-                icon = EllesmereUI.RESIZE_ICON, gap = 6, chain = false,
+                gap = 6, chain = false,
                 disabled = function() return Cfg("visibility") == "NEVER" end,
             })
         end
@@ -246,6 +246,49 @@ local function BuildBattleResPage(pageName, parent, yOffset)
 end
 
 _G._EUI_BuildBattleResPage = BuildBattleResPage
+
+-- Live preview hidden per tracker for this session only (a preview toggle is
+-- never saved): shown again after a /reload.
+local previewHidden = {}
+local function PreviewHidden(key)
+    return previewHidden[key] == true
+end
+local function SetPreviewHidden(key, hidden)
+    previewHidden[key] = hidden or nil
+end
+
+-- Inline eye left of a row's control: shows/hides that tracker's live preview.
+local function AttachPreviewEye(rgn, key, showTip, hideTip, setOwner, owner)
+    local EYE_VISIBLE   = EllesmereUI.EYE_VISIBLE_ICON
+    local EYE_INVISIBLE = EllesmereUI.EYE_INVISIBLE_ICON
+    local eyeBtn = CreateFrame("Button", nil, rgn)
+    eyeBtn:SetSize(26, 26)
+    eyeBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+    eyeBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+    EllesmereUI.SetGlyphAlpha(eyeBtn, 0.4)
+    rgn._lastInline = eyeBtn
+    local eyeTex = eyeBtn:CreateTexture(nil, "OVERLAY")
+    eyeTex:SetAllPoints()
+    local function RefreshEye()
+        eyeTex:SetTexture(PreviewHidden(key) and EYE_VISIBLE or EYE_INVISIBLE)
+    end
+    RefreshEye()
+    eyeBtn:SetScript("OnClick", function(self)
+        SetPreviewHidden(key, not PreviewHidden(key))
+        RefreshEye()
+        local fn = _G[setOwner]
+        if fn then fn((not PreviewHidden(key)) and owner or nil) end
+        if self:IsMouseOver() then self:GetScript("OnEnter")(self) end
+    end)
+    eyeBtn:SetScript("OnEnter", function(self)
+        EllesmereUI.SetGlyphAlpha(self, 0.7)
+        EllesmereUI.ShowWidgetTooltip(self, PreviewHidden(key) and showTip or hideTip)
+    end)
+    eyeBtn:SetScript("OnLeave", function(self)
+        EllesmereUI.SetGlyphAlpha(self, 0.4)
+        EllesmereUI.HideWidgetTooltip()
+    end)
+end
 
 -- Section-only builder for embedding in the Keys, Logs & Brez tab.
 -- Returns total height consumed.
@@ -265,12 +308,12 @@ _G._EUI_BuildBattleResSection = function(parent, yOffset, W, PP)
     -- pages and re-shows the wrapper without re-running this builder, so without it
     -- the preview would arm on the first visit only.
     if not EllesmereUI._prebuilding and _G._EUI_BattleRes_SetPreviewOwner then
-        _G._EUI_BattleRes_SetPreviewOwner(parent)
+        _G._EUI_BattleRes_SetPreviewOwner((not PreviewHidden("brez")) and parent or nil)
         if not parent._brPreviewHooked then
             parent._brPreviewHooked = true
             parent:HookScript("OnShow", function()
                 if _G._EUI_BattleRes_SetPreviewOwner then
-                    _G._EUI_BattleRes_SetPreviewOwner(parent)
+                    _G._EUI_BattleRes_SetPreviewOwner((not PreviewHidden("brez")) and parent or nil)
                 end
             end)
             parent:HookScript("OnHide", function()
@@ -315,6 +358,10 @@ _G._EUI_BuildBattleResSection = function(parent, yOffset, W, PP)
           disabled=TextModeOn,
           disabledTooltip=ICON_ROWS_TIP,
           swatches = MakeBorderColorSwatches() })
+    if not EllesmereUI._prebuilding then
+        AttachPreviewEye(row._leftRegion, "brez", "Show Battle Res preview",
+            "Hide Battle Res preview", "_EUI_BattleRes_SetPreviewOwner", parent)
+    end
     y = y - h
 
     row, h = W:DualRow(parent, y,
@@ -361,7 +408,7 @@ _G._EUI_BuildBattleResSection = function(parent, yOffset, W, PP)
                       get=function() return Cfg(yKey) or 0 end,
                       set=function(v) Set(yKey, v); Refresh() end },
                 },
-                icon = EllesmereUI.RESIZE_ICON, gap = 6, chain = false,
+                gap = 6, chain = false,
                 disabled = TextModeOn,
             })
         end
@@ -425,14 +472,14 @@ _G._EUI_BuildBattleResSection = function(parent, yOffset, W, PP)
             UpdateState()
             return swatch
         end
-        local timerSwatch = MakeInlineTextSwatch("textTimerColor", "Timer Color", rgn._control)
-        local countSwatch = MakeInlineTextSwatch("textCountColor", "Count Color", timerSwatch)
-        rgn._lastInline = countSwatch
-
         AttachToggleCog(rgn, "Icon Settings", "Desaturate when No Charges",
             function() return Cfg("desaturateNoCharges") ~= false end,
             function(v) Set("desaturateNoCharges", v); Refresh() end,
             TextModeOn, ICON_ROWS_TIP)
+
+        local timerSwatch = MakeInlineTextSwatch("textTimerColor", "Timer Color", rgn._lastInline or rgn._control)
+        local countSwatch = MakeInlineTextSwatch("textCountColor", "Count Color", timerSwatch)
+        rgn._lastInline = countSwatch
     end
 
     -- Font | Font Outline: text-display-only controls (the icon's duration /
@@ -586,12 +633,12 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
     -- pages and re-shows the wrapper without re-running this builder, so without it
     -- the preview would arm on the first visit only.
     if not EllesmereUI._prebuilding and _G._EUI_Bloodlust_SetPreviewOwner then
-        _G._EUI_Bloodlust_SetPreviewOwner(parent)
+        _G._EUI_Bloodlust_SetPreviewOwner((not PreviewHidden("lust")) and parent or nil)
         if not parent._blPreviewHooked then
             parent._blPreviewHooked = true
             parent:HookScript("OnShow", function()
                 if _G._EUI_Bloodlust_SetPreviewOwner then
-                    _G._EUI_Bloodlust_SetPreviewOwner(parent)
+                    _G._EUI_Bloodlust_SetPreviewOwner((not PreviewHidden("lust")) and parent or nil)
                 end
             end)
             parent:HookScript("OnHide", function()
@@ -636,6 +683,10 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
           setValue=function(v) BL_Set("shape", v); BL_Refresh() end },
         { type="multiSwatch", text="Border Color",
           swatches = MakeBloodlustBorderColorSwatches() })
+    if not EllesmereUI._prebuilding then
+        AttachPreviewEye(row._leftRegion, "lust", "Show Bloodlust preview",
+            "Hide Bloodlust preview", "_EUI_Bloodlust_SetPreviewOwner", parent)
+    end
     y = y - h
 
     row, h = W:DualRow(parent, y,
@@ -670,7 +721,7 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
         -- (parenting it to the anchor instead would multiply the cog's disabled
         -- alpha by that anchor's, greying it into invisibility).
         local function _attachOffsetCog(rgn, popupTitle, xKey, yKey, disabledFn, disabledText, anchorTo)
-            EllesmereUI.BuildInlineCog(rgn, {
+            return EllesmereUI.BuildInlineCog(rgn, {
                 title = popupTitle,
                 rows = {
                     { type="slider", label="X Offset", min=-50, max=50, step=1,
@@ -680,7 +731,7 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
                       get=function() return BL_Cfg(yKey) or 0 end,
                       set=function(v) BL_Set(yKey, v); BL_Refresh() end },
                 },
-                icon = EllesmereUI.RESIZE_ICON, gap = 6, chain = false, anchorTo = anchorTo,
+                gap = 6, chain = false, anchorTo = anchorTo,
                 disabled = disabledFn, disabledTooltip = disabledText,
             })
         end
@@ -715,7 +766,7 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
                 function() return BL_Cfg("showSated") == false end, "Show Icon when Sated")
         end
 
-        -- Ready appearance: offset cog, colour swatch and size slider on one row,
+        -- Ready appearance: colour swatch, offset cog and size slider on one row,
         -- disabled (not hidden) while Show Ready is off so the layout never
         -- reshuffles on the toggle.
         local function readyOff() return BL_Cfg("showReady") ~= true end
@@ -730,6 +781,10 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
         y = y - h
         do
             local leftRgn = row._leftRegion
+            -- The offset cog sits beside the slider and the swatch left of it,
+            -- both parented to the row region like the other two.
+            local readyCog = _attachOffsetCog(leftRgn, "Ready Position", "readyOffsetX", "readyOffsetY",
+                readyOff, "Show Icon with Ready Text")
             local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5,
                 function()
                     local c = BL_Cfg("readyColor")
@@ -740,7 +795,9 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
                     BL_Set("readyColor", { r = r, g = g, b = b })
                     BL_Refresh()
                 end, false, 20)
-            PP.Point(swatch, "RIGHT", leftRgn._control, "LEFT", -12, 0)
+            PP.Point(swatch, "RIGHT", readyCog or leftRgn._control, "LEFT", -8, 0)
+            -- The leftmost item: the label clamp's bound.
+            leftRgn._lastInline = swatch
             EllesmereUI.RegisterWidgetRefresh(function()
                 local off = readyOff()
                 swatch:SetAlpha(off and 0.3 or 1)
@@ -761,11 +818,6 @@ _G._EUI_BuildBloodlustSection = function(parent, yOffset, W, PP)
                 readyColorBlock:SetShown(readyOff())
             end)
             readyColorBlock:SetShown(readyOff())
-            -- Cog anchors LEFT of the swatch (not the slider) so it lands in the
-            -- empty gap instead of stacking both on the slider's left edge, while
-            -- staying parented to the row region like the other two.
-            _attachOffsetCog(leftRgn, "Ready Position", "readyOffsetX", "readyOffsetY",
-                readyOff, "Show Icon with Ready Text", swatch)
         end
     end
     end   -- close Bloodlust hidden-while-Never gate

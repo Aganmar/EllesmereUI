@@ -178,6 +178,7 @@ local KEY_PREFIX_FOLDER = {
     ["ERB_"]   = "EllesmereUIResourceBars",
     ["ECHAT_"] = "EllesmereUIChat",
     ["EBS_"]   = "EllesmereUIMinimap",
+    ["EQT_"]   = "EllesmereUIQuestTracker",
     ["EDR_"]   = "EllesmereUIBlizzardSkin",
     ["EMT_"]   = "EllesmereUIMythicTimer",
     ["EABR_"]  = "EllesmereUIAuraBuffReminders",
@@ -200,7 +201,7 @@ if EllesmereUI.IS_FOREVER == true then AB_BAREWORD.FavorBar = true end
 local UF_BAREWORD = {
     player=true, target=true, focus=true, pet=true, targettarget=true,
     focustarget=true, boss=true, classPower=true,
-    playerCastbar=true, targetCastbar=true, focusCastbar=true,
+    playerCastbar=true, targetCastbar=true, focusCastbar=true, petCastbar=true,
 }
 -- providedFolder (already a local folder: elem.folder, or a payload value that
 -- has been CanonToLocal'd) wins; the static resolution is the fallback.
@@ -677,6 +678,7 @@ end
 --      fonts  = <snapshot of EllesmereUIDB.fonts>,
 --      customColors = <snapshot of EllesmereUIDB.customColors>,
 --      darkMode = <per-profile Dark Mode palette + class/power/resource darken>,
+--      numberFormat = <per-profile Number Format, EllesmereUI_NumberFormat.lua>,
 --  }
 --  EllesmereUIDB.activeProfile = "Default"  (name of active profile)
 --  EllesmereUIDB.profileOrder  = { "Default", ... }
@@ -776,6 +778,7 @@ local function StampUnlockLayoutIfMissing(prof)
         { cb = "playerCastbar", parent = "player" },
         { cb = "targetCastbar", parent = "target" },
         { cb = "focusCastbar",  parent = "focus" },
+        { cb = "petCastbar",    parent = "pet" },
     }
     for _, def in ipairs(CB_DEFAULTS) do
         if not snap.anchors[def.cb] then
@@ -929,6 +932,8 @@ local function RepointAllDBs(profileName)
     -- RefreshDarkMode() also runs ApplyColorsToOUF, so the (possibly different)
     -- darken propagates to class/power colours even in global colour mode.
     EllesmereUI.RefreshDarkMode()
+    -- Number Format is per-profile too: drop the resolved configs and redraw.
+    EllesmereUI.RefreshNumberFormat()
     -- Sidebar sync icons key off the ACTIVE profile's group membership;
     -- re-evaluate them on every repoint (switch/create/delete/rename/import)
     if EllesmereUI._syncRefreshFns then
@@ -1064,6 +1069,7 @@ function EllesmereUI.SnapshotAllAddons()
     data.customColors = DeepCopy(cc)
     -- Dark Mode palette + darken amounts (always the active profile's own).
     data.darkMode = DeepCopy(EllesmereUI.GetDarkModeDB())
+    data.numberFormat = DeepCopy(EllesmereUI.GetNumberFormatDB())
     -- Spec Overrides ride with the profile (freshen the current spec's stored
     -- values from live first so exports never lag recent edits).
     if EllesmereUI.SpecOverrides_HarvestCurrent then
@@ -1841,6 +1847,14 @@ function EllesmereUI.ProfileChangesStyle(profileData)
     if type(profileData) ~= "table" or type(profileData.addons) ~= "table" then return false end
     local reg = EllesmereUI._ModuleNS
     if not reg then return false end
+    -- Bags' WoW Forever style: the incoming profile's own Bags pick, else the
+    -- look most of its modules use (BagsForeverWanted).
+    local bags = EllesmereUI.IS_FOREVER and reg.EllesmereUIBags
+    if bags and bags.BagsForeverWanted then
+        local incoming = profileData.addons.EllesmereUIBags
+        local want = bags.BagsForeverWanted(type(incoming) == "table" and incoming or nil, profileData.addons)
+        if bags.BagsForever() ~= want then return true end
+    end
     for i = 1, #STYLE_FLAGS do
         local f = STYLE_FLAGS[i]
         local mns = reg[f.folder]
@@ -1896,6 +1910,37 @@ function EllesmereUI.RenderedLook()
         if look ~= "blizzard" and look ~= "forever" then return false end
     end
     return look
+end
+
+--- WoW Forever: true when more than half of the loaded modules' styleable
+--- surfaces are on the WoW Forever look in a profile's addons table (nil = the
+--- active profile's): the Blizzard flag set with its Forever sibling, which a
+--- surface with no variant of its own also carries beside the Blizzard flag (as
+--- RenderedLook reads it); the Classic flag wins. Bags' WoW Forever style
+--- follows it while the profile has no Bags style picked. false off the Forever
+--- client and with no loaded surface. Reads settings only.
+function EllesmereUI.ForeverLookMajority(addons)
+    if not EllesmereUI.IS_FOREVER then return false end
+    if addons == nil then
+        local p = EllesmereUI.GetActiveProfileData()
+        addons = p and p.addons
+    end
+    local reg = EllesmereUI._ModuleNS
+    if type(addons) ~= "table" or not reg then return false end
+    local total, forever = 0, 0
+    for i = 1, #STYLE_FLAGS do
+        local f = STYLE_FLAGS[i]
+        if reg[f.folder] and not f.retailOnly then
+            total = total + 1
+            local t = addons[f.data or f.folder]
+            if f.sub and type(t) == "table" then t = t[f.sub] end
+            if type(t) == "table" and t[f.key] and not t[f.classic]
+                and t[f.forever or (f.key:gsub("Blizzard", "Forever", 1))] then
+                forever = forever + 1
+            end
+        end
+    end
+    return forever * 2 > total
 end
 
 -------------------------------------------------------------------------------
@@ -2069,6 +2114,8 @@ do
         "tooltipShowGuildRank", "tooltipShowTarget", "tooltipShowMode",
         "tooltipShowRarity",
         "tooltipShowModifier", "tooltipGrowthDirection",
+        "tooltipLevelColor", "tooltipClassLineColor", "tooltipFactionColor",
+        "tooltipGuildmateColor", "tooltipCompactLevel", "tooltipAFKTag",
         "uberTooltips", "uberTooltipsManual", "tooltipHideHealthStrip",
         "tooltipHealthStripTexture", "tooltipHealthStripHeight",
         "tooltipAnchorCursor", "tooltipCursorPosition",
@@ -2088,7 +2135,7 @@ do
         "accentReskinElements",
     })
     -- Shared border-editor key sets (tooltip / popup menu / popup menu button)
-    for _, prefix in ipairs({ "tooltip", "popupMenu", "popupMenuButton" }) do
+    for _, prefix in ipairs({ "tooltip", "popupMenu", "popupMenuButton", "lootWindow", "lootIcon" }) do
         for _, suffix in ipairs({
             "BorderTexture", "BorderThickness", "BorderThicknessPx", "BorderColor",
             "BorderColorMode", "BorderOpacity", "BorderOffsetX",
@@ -2104,7 +2151,7 @@ do
         "reskinPlayerSpells", "reskinAdventureGuide", "reskinProfessionsBook",
         "reskinProfessions", "reskinWorldMap", "reskinGuild", "reskinCalendar",
         "reskinAchievements", "reskinMail", "reskinCatalyst", "reskinSocket",
-        "reskinItemUpgrade", "reskinLoot", "reskinLootToast", "lootToastQualityStrip",
+        "reskinItemUpgrade", "reskinLoot", "lootIconBorder", "lootWindowBorderQualityColor", "reskinLootToast", "lootToastQualityStrip",
         "lootToastQualityStripMoney", "lootToastScale",
         "reskinBNetToast",
         "reskinLootRoll", "reskinLootHistory", "reskinGroupInvite",
@@ -2145,6 +2192,7 @@ do
         -- LFG / Merchant / Mail cards
         "lfgRememberRoles",
         "merchantShowAsList", "merchantListRowHeight", "merchantShowItemLevel", "merchantBulkBuy",
+        "merchantExpand", "merchantCols", "merchantRows",
         "mailAltList", "mailAltListMax", "mailAltListMinLevel", "mailAltListSort",
         -- Friends List card (WoW Forever: the friend tiles and auto-accept)
         "friendsListCard",
@@ -2272,8 +2320,8 @@ function EllesmereUI.ExportProfile(profileName, includedFolders, includeLayout, 
     -- fonts/customColors/darkMode/euiAccent are profile-GLOBAL appearance and are
     -- not separable per-addon, so a subset export must not carry them (they'd
     -- clobber the recipient's). Only a full-profile export carries them.
-    -- Profile-global appearance (fonts, custom colours, dark mode, accent)
-    -- and the account UI scale ride only when "Global Settings" is included
+    -- Profile-global appearance (fonts, custom colours, dark mode, accent,
+    -- number format) and the account UI scale ride only when "Global Settings" is included
     -- (default ON) -- full and subset exports alike, since the unified export
     -- flow offers the toggle for both (2026-07-20 redesign; the old subset
     -- path dropped uiScale unconditionally, which would have regressed scale
@@ -2283,6 +2331,7 @@ function EllesmereUI.ExportProfile(profileName, includedFolders, includeLayout, 
         exportData.fonts        = nil
         exportData.customColors = nil
         exportData.darkMode     = nil
+        exportData.numberFormat = nil
         exportData.euiAccent    = nil
         exportData.uiScale      = nil
     end
@@ -2403,14 +2452,24 @@ end
 --    goldLedger           cross-character and warband gold record
 --    qolUpgradeCalcChars  Upgrade Calculator per-character cache
 --    xpBarChars           XP bar session clock, XP rate and time this level
+--    timePlayedChars      Time Played block: each character's total played time
 --    questWatchChars      WoW Forever quest tools: quests each character's
 --                         filters and auto-track moved
+--    questTrackerChars    WoW Forever Custom Quest Tracker: each character's
+--                         untracked, collapsed, opened and pinned quests
 --    mailAltRoster        the Mail card's Alt List: every character recorded
 --    mailAltHidden        and the ones its Shown Characters leaves out
 --    raidHoroscope        Party Mode's Should I Raid Tonight?: each
 --                         character's birthday
 --    cdmCachedBarSizes    Cooldown Manager bar sizes cached per character
 --    bagCurrencyByChar    Bags' tracked currencies per character
+--    mageArmorByChar      AuraBuff Reminders (WoW Forever): the mage armor
+--                         each character last had up
+--    classBuffByChar      and the class buff lines each character last had up
+--    spellUprankChars     Forever Essentials' Auto Uprank Spells on Bars: the
+--                         highest spell ranks each character and pet has had
+--    global               friend groups: the groups, their order and colours,
+--                         and each friend's group by BattleTag
 --  (The upgrade-calc and gold blobs are what PRIVATE_ADDON_KEYS strips from
 --  normal strings, at their current top-level homes. The three legacy gold
 --  keys stay listed: until Bags or DataBars loads and absorbs them they are
@@ -2421,6 +2480,8 @@ end
 --    gfxBackup              Optimize My FPS and Graphics' Restore values
 --    friendlyPlateVisSaved  friendly plates hidden in a follower dungeon
 --    chatTellMuted          the whisper sound Chat muted
+--  And the inline cogs this user has opened (cogSeen: their notification dots
+--  stay for whoever imports the string).
 -------------------------------------------------------------------------------
 local FULL_EXPORT_TYPE = "fullaccount"
 local FULL_EXPORT_EXCLUDED = {
@@ -2430,18 +2491,26 @@ local FULL_EXPORT_EXCLUDED = {
     warbandGold           = true,
     qolUpgradeCalcChars   = true,
     xpBarChars            = true,
+    timePlayedChars       = true,
     restoreOnUninstall    = true,
     gfxBackup             = true,
     friendlyPlateVisSaved = true,
     chatTellMuted         = true,
     groupFinderApps       = true,
     questWatchChars       = true,
+    questTrackerChars     = true,
     cdmRepopulatePending  = true,
+    cdmRepopulateDone     = true,
     mailAltRoster         = true,
     mailAltHidden         = true,
     raidHoroscope         = true,
     cdmCachedBarSizes     = true,
     bagCurrencyByChar     = true,
+    mageArmorByChar       = true,
+    classBuffByChar       = true,
+    spellUprankChars      = true,
+    global                = true,
+    cogSeen               = true,
 }
 
 -- Root stores keyed by profile name (or character) describe the recipient's
@@ -3448,6 +3517,13 @@ function EllesmereUI.ImportProfile(importStr, profileName)
         if imported.fonts then merged.fonts = DeepCopy(imported.fonts) end
         if imported.customColors then merged.customColors = DeepCopy(imported.customColors) end
         if imported.darkMode then merged.darkMode = DeepCopy(imported.darkMode) end
+        -- numberFormat only exists once its owner changed something, so a string
+        -- with the other global settings but none comes from the defaults.
+        if imported.numberFormat then
+            merged.numberFormat = DeepCopy(imported.numberFormat)
+        elseif imported.fonts then
+            merged.numberFormat = nil
+        end
         -- Override stores: ALL-OR-NOTHING (2026-07-20 redesign; the old per-folder
         -- value merge in SpecOverrides_MergeImportedStores is retired and must not be
         -- re-wired). Taking -> the exporter's complete override system (values + groups
@@ -4581,7 +4657,7 @@ local function BuildStringPopup(title, subtitle, readOnly, onConfirm, confirmLab
     local bg = popup:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(0.077, 0.068, 0.058, 1)
-    EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.15, EllesmereUI.PanelPP)
+    EllesmereUI.MakeRoundedBorder(popup, 1, 1, 1, 0.15, bg)
 
     -- Title
     local titleFS = EllesmereUI.MakeFont(popup, 15, "", 1, 1, 1)

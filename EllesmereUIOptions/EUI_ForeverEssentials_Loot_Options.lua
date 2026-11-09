@@ -43,8 +43,7 @@ _G._EUI_BuildLootFeedPage = function(pageName, parent, yOffset)
     -- Auction prices count only while the tracker or an item price shows, and
     -- only with the price addon's API at hand.
     local function auctionSource()
-        local api = Auctionator and Auctionator.API and Auctionator.API.v1
-        return api and api.GetAuctionPriceByItemLink and true or false
+        return EllesmereUI._ModuleNS["EllesmereUIForeverEssentials"].AuctionAPI() ~= nil
     end
     local function pricesUnused()
         return not (LF.Get("tracker") or (LF.Get("items") and LF.Get("showPrice")))
@@ -162,6 +161,12 @@ _G._EUI_BuildLootFeedPage = function(pageName, parent, yOffset)
 
     _, h = W:DualRow(parent, y,
         Toggle("skills", "Skill Ups", "Weapon and profession skill increases.", Reapply),
+        Toggle("rolls", "Loot Rolls",
+            "Who won each group loot roll and with what roll. Your own wins add the roll to the item's row.",
+            Reapply)
+    );  y = y - h
+
+    _, h = W:DualRow(parent, y,
         Toggle("tracker", "Gold per Hour Tracker", "Pins a row with your gold per hour.",
             function()
                 LF.Apply()
@@ -180,13 +185,7 @@ _G._EUI_BuildLootFeedPage = function(pageName, parent, yOffset)
     ---------------------------------------------------------------------------
     _, h = W:SectionHeader(parent, "ITEMS", y);  y = y - h
 
-    local qualityValues, qualityOrder = {}, {}
-    for q = 0, 5 do
-        local key, color = tostring(q), ITEM_QUALITY_COLORS[q]
-        local label = _G["ITEM_QUALITY" .. q .. "_DESC"] or key
-        qualityValues[key] = color and (color.hex .. label .. "|r") or label
-        qualityOrder[q + 1] = key
-    end
+    local qualityValues, qualityOrder = _G._EUI_ItemQualityValues(Enum.ItemQuality.Legendary)
 
     _, h = W:DualRow(parent, y,
         Bind({ type = "dropdown", text = "Minimum Quality", values = qualityValues, order = qualityOrder,
@@ -312,7 +311,6 @@ _G._EUI_BuildLootFeedPage = function(pageName, parent, yOffset)
                 set = function(v) LF.Cfg()[key] = v; LF.ApplyStyle() end }
         end
         EllesmereUI.BuildInlineCog(borderRow._leftRegion, { title = "Border Options",
-            icon = EllesmereUI.DIRECTIONS_ICON,
             disabled = function()
                 local tex = LF.Get("borderTexture")
                 return borderOff() or not tex or tex == "solid" or tex == ""

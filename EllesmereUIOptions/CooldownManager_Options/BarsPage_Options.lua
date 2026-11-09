@@ -94,7 +94,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             popup:SetPoint("CENTER", UIParent, "CENTER", 0, 60)
             popup:EnableMouse(true)
             local bg = popup:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.077, 0.068, 0.058, 1)
-            EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.15, PP)
+            P.brd = EllesmereUI.MakeRoundedBorder(popup, 1, 1, 1, 0.15, bg)
             local titleFs = EllesmereUI.MakeFont(popup, 15, nil, 1, 1, 1, 1)
             titleFs:SetPoint("TOP", popup, "TOP", 0, -14); titleFs:SetText("Sync From")
             local subFs = EllesmereUI.MakeFont(popup, 11, nil, 1, 1, 1, 0.45)
@@ -108,7 +108,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             search:SetTextColor(1, 1, 1, 0.9); search:SetJustifyH("LEFT")
             search:SetAutoFocus(false); search:SetMaxLetters(30); search:SetTextInsets(6, 6, 0, 0)
             local sbg = search:CreateTexture(nil, "BACKGROUND"); sbg:SetAllPoints(); sbg:SetColorTexture(0, 0, 0, 0.4)
-            EllesmereUI.MakeBorder(search, 1, 1, 1, 0.10, PP)
+            EllesmereUI.MakeRoundedBorder(search, 1, 1, 1, 0.10, sbg)
             local ph = search:CreateFontString(nil, "OVERLAY"); ph:SetFont(FONT_PATH, 11, "")
             ph:SetTextColor(0.5, 0.5, 0.5, 0.6); ph:SetPoint("LEFT", search, "LEFT", 6, 0); ph:SetText("Search...")
             search:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
@@ -191,6 +191,8 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             local visH = math.min(listH, MAX_LIST_H)
             P.scroll:SetHeight(visH)
             P.popup:SetHeight(110 + visH)
+            -- Rebuilt while shown (search typing): refit the outline's bottom edge.
+            P.brd:Fit()
             P.scroll:SetVerticalScroll(0)
             if P.updateThumb then P.updateThumb() end
         end
@@ -415,7 +417,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         ddBtn:SetFrameLevel(hdr:GetFrameLevel() + 5)
         local ddBg = ddBtn:CreateTexture(nil, "BACKGROUND")
         ddBg:SetAllPoints(); ddBg:SetColorTexture(mBgR, mBgG, mBgB, mBgA)
-        local ddBrd = EllesmereUI.MakeBorder(ddBtn, 1, 1, 1, mBrdA, EllesmereUI.PanelPP)
+        local ddBrd = EllesmereUI.MakeRoundedBorder(ddBtn, 1, 1, 1, mBrdA, ddBg)
         local ddLbl = ddBtn:CreateFontString(nil, "OVERLAY")
         ddLbl:SetFont(FONT_PATH, 13, GetCDMOptOutline())
         ddLbl:SetAlpha(mTxtA)
@@ -484,7 +486,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             menu:SetPoint("TOPRIGHT", ddBtn, "BOTTOMRIGHT", 0, -2)
             local bg = menu:CreateTexture(nil, "BACKGROUND")
             bg:SetAllPoints(); bg:SetColorTexture(mBgR, mBgG, mBgB, mBgHA)
-            EllesmereUI.MakeBorder(menu, 1, 1, 1, mBrdA, EllesmereUI.PP)
+            EllesmereUI.MakeRoundedBorder(menu, 1, 1, 1, mBrdA, bg, nil, true)
 
             local mH = 4
             local customCount = 0
@@ -1149,7 +1151,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             rowGrowOrder = { "CENTER", "DOWN", "UP" }
             rowGrowTip = "How extra rows grow when the second row appears or disappears. Grow Down keeps the top row in place, Grow Up keeps the bottom row in place, Grow Centered keeps the bar centered."
         end
-        EllesmereUI.BuildInlineCog(leftRgn, { anchorTo = ctrl, icon = EllesmereUI.COGS_ICON,
+        EllesmereUI.BuildInlineCog(leftRgn, { anchorTo = ctrl,
             title = "Row Icons",
             rows = {
                 { type="dropdown", label="Row Growth",
@@ -1525,7 +1527,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         if not EllesmereUI._prebuilding then
             local rgn = npRow._leftRegion
             EllesmereUI.BuildInlineCog(rgn, {
-                icon = EllesmereUI.RESIZE_ICON, anchorTo = rgn._control,
+                anchorTo = rgn._control,
                 title = "Nameplate Offset",
                 rows = {
                     { type = "slider", label = "X Offset", min = -100, max = 100, step = 1,
@@ -1544,12 +1546,36 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             })
         end
 
-        -- Inline dual swatch + cog for Focus Reminders (right region). Layout right-to-left
-        -- along the row's right region: [control] [accent swatch] [custom swatch] [cog].
-        -- Accent swatch (closest to control) is the active mode by default; custom swatch dims and blocks while accent is on.
+        -- Inline cog + dual swatch for Focus Reminders (right region). Layout right-to-left
+        -- along the row's right region: [control] [cog] [accent swatch] [custom swatch].
+        -- Accent swatch (next to the cog) is the active mode by default; custom swatch dims and blocks while accent is on.
         if not EllesmereUI._prebuilding then
             local rgn = npRow._rightRegion
             local ctrl = rgn and rgn._control
+
+            EllesmereUI.BuildInlineCog(rgn, {
+                title = "Focus Reminder Settings",
+                rows = {
+                    { type = "slider", label = "Text Size", min = 8, max = 50, step = 1,
+                      get = function() return BD().focusReminderSize or 26 end,
+                      set = function(v)
+                          BD().focusReminderSize = v
+                          if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
+                      end },
+                    { type = "slider", label = "X Offset", min = -100, max = 100, step = 1,
+                      get = function() return BD().focusReminderOffsetX or 0 end,
+                      set = function(v)
+                          BD().focusReminderOffsetX = v
+                          if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
+                      end },
+                    { type = "slider", label = "Y Offset", min = -100, max = 100, step = 1,
+                      get = function() return BD().focusReminderOffsetY or 0 end,
+                      set = function(v)
+                          BD().focusReminderOffsetY = v
+                          if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
+                      end },
+                },
+            })
 
             -- Right (accent) swatch: one-click activation, displays live ELLESMERE_GREEN
             local accentSwatch, updateAccentSwatch = EllesmereUI.BuildColorSwatch(
@@ -1561,7 +1587,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
                 end,
                 function() end,  -- read-only display, no picker
                 false, 20)
-            PP.Point(accentSwatch, "RIGHT", ctrl, "LEFT", -8, 0)
+            PP.Point(accentSwatch, "RIGHT", rgn._lastInline or ctrl, "LEFT", -8, 0)
             accentSwatch:SetScript("OnClick", function()
                 BD().focusReminderUseAccent = true
                 if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
@@ -1607,30 +1633,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
                 EllesmereUI.ShowWidgetTooltip(customSwatch, "Custom Color")
             end)
             customBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-
-            EllesmereUI.BuildInlineCog(rgn, { anchorTo = customSwatch, icon = EllesmereUI.RESIZE_ICON,
-                title = "Focus Reminder Settings",
-                rows = {
-                    { type = "slider", label = "Text Size", min = 8, max = 50, step = 1,
-                      get = function() return BD().focusReminderSize or 26 end,
-                      set = function(v)
-                          BD().focusReminderSize = v
-                          if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
-                      end },
-                    { type = "slider", label = "X Offset", min = -100, max = 100, step = 1,
-                      get = function() return BD().focusReminderOffsetX or 0 end,
-                      set = function(v)
-                          BD().focusReminderOffsetX = v
-                          if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
-                      end },
-                    { type = "slider", label = "Y Offset", min = -100, max = 100, step = 1,
-                      get = function() return BD().focusReminderOffsetY or 0 end,
-                      set = function(v)
-                          BD().focusReminderOffsetY = v
-                          if ns.RefreshFocusReminders then ns.RefreshFocusReminders() end
-                      end },
-                },
-            })
+            rgn._lastInline = customSwatch
 
             -- Disable both swatches + cog when Focus Text Reminders toggle is off
             local enableBlock = CreateFrame("Frame", nil, customSwatch)
@@ -2205,7 +2208,6 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             if not EllesmereUI._prebuilding then
                 local rgn = buffBsRow._rightRegion
                 local cogBtn = EllesmereUI.BuildInlineCog(rgn, {
-                    icon = EllesmereUI.DIRECTIONS_ICON,
                     title = "Border Options",
                     rows = {
                         { type = "slider", label = "Shift X", min = -10, max = 10, step = 1,
@@ -2486,7 +2488,6 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         local minVert = BD().verticalOrientation == true
         local rgn = isBuffGlowBar and scaleAnimRow._rightRegion or scaleAnimRow._leftRegion
         EllesmereUI.BuildInlineCog(rgn, {
-            icon = EllesmereUI.RESIZE_ICON,
             title = minVert and "Minimum Height" or "Minimum Width",
             rows = {
                 { type="slider",
@@ -2601,7 +2602,6 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         if not EllesmereUI._prebuilding then
             local rgn = bsRow._leftRegion
             local cogBtn = EllesmereUI.BuildInlineCog(rgn, {
-                icon = EllesmereUI.DIRECTIONS_ICON,
                 title = "Border Options",
                 rows = {
                     { type = "slider", label = "Shift X", min = -10, max = 10, step = 1,
@@ -2914,7 +2914,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
     end
     end -- not isBuffGlowBar
 
-    -- Row 4: Duration Size (swatch + cog) | Stack Size (swatch + cog)
+    -- Row 4: Duration Size (cog + swatch) | Stack Size (cog + swatch)
     local durationRow
     durationRow, h = W:DualRow(parent, y,
         { type="slider", text="Duration Size",
@@ -2933,38 +2933,11 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
           end }
     );  y = y - h
 
-    -- Duration Size: inline color swatch + cog
+    -- Duration Size: inline cog + color swatch
     if not EllesmereUI._prebuilding then
         local leftRgn = durationRow._leftRegion
         local ctrl = leftRgn._control
-        local durSwatch, updateDurSwatch = EllesmereUI.BuildColorSwatch(
-            leftRgn, durationRow:GetFrameLevel() + 3,
-            function() return BD().cooldownTextR or 1, BD().cooldownTextG or 1, BD().cooldownTextB or 1 end,
-            function(r, g, b)
-                BD().cooldownTextR = r; BD().cooldownTextG = g; BD().cooldownTextB = b
-                ns.RefreshCDMIconAppearance(BD().key); Refresh(); UpdateCDMPreview()
-            end,
-            false, 20)
-        PP.Point(durSwatch, "RIGHT", ctrl, "LEFT", -12, 0)
-        leftRgn._lastInline = durSwatch
-
-        local durBlock = CreateFrame("Frame", nil, durSwatch)
-        durBlock:SetAllPoints(); durBlock:SetFrameLevel(durSwatch:GetFrameLevel() + 10); durBlock:EnableMouse(true)
-        durBlock:SetScript("OnEnter", function()
-            EllesmereUI.ShowWidgetTooltip(durSwatch, EllesmereUI.DisabledTooltip("Duration Text"))
-        end)
-        durBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-        EllesmereUI.RegisterWidgetRefresh(function()
-            if updateDurSwatch then updateDurSwatch() end
-            local on = BD().showCooldownText ~= false
-            durSwatch:SetAlpha(on and 1 or 0.3)
-            if on then durBlock:Hide() else durBlock:Show() end
-        end)
-        local on = BD().showCooldownText ~= false
-        durSwatch:SetAlpha(on and 1 or 0.3)
-        if on then durBlock:Hide() else durBlock:Show() end
-
-        EllesmereUI.BuildInlineCog(leftRgn, { anchorTo = durSwatch, icon = EllesmereUI.DIRECTIONS_ICON,
+        EllesmereUI.BuildInlineCog(leftRgn, {
             title = "Duration Text",
             rows = {
                 { type="toggle", label="Show Duration",
@@ -2994,39 +2967,39 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
                   end },
             },
         })
+
+        local durSwatch, updateDurSwatch = EllesmereUI.BuildColorSwatch(
+            leftRgn, durationRow:GetFrameLevel() + 3,
+            function() return BD().cooldownTextR or 1, BD().cooldownTextG or 1, BD().cooldownTextB or 1 end,
+            function(r, g, b)
+                BD().cooldownTextR = r; BD().cooldownTextG = g; BD().cooldownTextB = b
+                ns.RefreshCDMIconAppearance(BD().key); Refresh(); UpdateCDMPreview()
+            end,
+            false, 20)
+        PP.Point(durSwatch, "RIGHT", leftRgn._lastInline or ctrl, "LEFT", -8, 0)
+        leftRgn._lastInline = durSwatch
+
+        local durBlock = CreateFrame("Frame", nil, durSwatch)
+        durBlock:SetAllPoints(); durBlock:SetFrameLevel(durSwatch:GetFrameLevel() + 10); durBlock:EnableMouse(true)
+        durBlock:SetScript("OnEnter", function()
+            EllesmereUI.ShowWidgetTooltip(durSwatch, EllesmereUI.DisabledTooltip("Duration Text"))
+        end)
+        durBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+        EllesmereUI.RegisterWidgetRefresh(function()
+            if updateDurSwatch then updateDurSwatch() end
+            local on = BD().showCooldownText ~= false
+            durSwatch:SetAlpha(on and 1 or 0.3)
+            if on then durBlock:Hide() else durBlock:Show() end
+        end)
+        local on = BD().showCooldownText ~= false
+        durSwatch:SetAlpha(on and 1 or 0.3)
+        if on then durBlock:Hide() else durBlock:Show() end
     end
 
-    -- Stack Size: inline color swatch + cog
+    -- Stack Size: inline cog + color swatch
     if not EllesmereUI._prebuilding then
         local rightRgn = durationRow._rightRegion
         local ctrl = rightRgn._control
-        local scSwatch, updateScSwatch = EllesmereUI.BuildColorSwatch(
-            rightRgn, durationRow:GetFrameLevel() + 3,
-            function() return BD().stackCountR or 1, BD().stackCountG or 1, BD().stackCountB or 1 end,
-            function(r, g, b)
-                BD().stackCountR = r; BD().stackCountG = g; BD().stackCountB = b
-                ns.RefreshCDMIconAppearance(BD().key); ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview()
-            end,
-            false, 20)
-        PP.Point(scSwatch, "RIGHT", ctrl, "LEFT", -12, 0)
-        rightRgn._lastInline = scSwatch
-
-        local scBlock = CreateFrame("Frame", nil, scSwatch)
-        scBlock:SetAllPoints(); scBlock:SetFrameLevel(scSwatch:GetFrameLevel() + 10); scBlock:EnableMouse(true)
-        scBlock:SetScript("OnEnter", function()
-            EllesmereUI.ShowWidgetTooltip(scSwatch, EllesmereUI.DisabledTooltip("Item Count"))
-        end)
-        scBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-        EllesmereUI.RegisterWidgetRefresh(function()
-            if updateScSwatch then updateScSwatch() end
-            local on = BD().showItemCount ~= false
-            scSwatch:SetAlpha(on and 1 or 0.3)
-            if on then scBlock:Hide() else scBlock:Show() end
-        end)
-        local on = BD().showItemCount ~= false
-        scSwatch:SetAlpha(on and 1 or 0.3)
-        if on then scBlock:Hide() else scBlock:Show() end
-
         local scPopupSpec = {
             title = "Charges/Stacks",
             rows = {
@@ -3094,8 +3067,34 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         }
         -- Show Charge/Stack Text (row 3) is buff-family only -- see its comment.
         if not isBuffGlowBar then table.remove(scPopupSpec.rows, 3) end
-        scPopupSpec.icon, scPopupSpec.anchorTo = EllesmereUI.DIRECTIONS_ICON, scSwatch
         EllesmereUI.BuildInlineCog(rightRgn, scPopupSpec)
+
+        local scSwatch, updateScSwatch = EllesmereUI.BuildColorSwatch(
+            rightRgn, durationRow:GetFrameLevel() + 3,
+            function() return BD().stackCountR or 1, BD().stackCountG or 1, BD().stackCountB or 1 end,
+            function(r, g, b)
+                BD().stackCountR = r; BD().stackCountG = g; BD().stackCountB = b
+                ns.RefreshCDMIconAppearance(BD().key); ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreview()
+            end,
+            false, 20)
+        PP.Point(scSwatch, "RIGHT", rightRgn._lastInline or ctrl, "LEFT", -8, 0)
+        rightRgn._lastInline = scSwatch
+
+        local scBlock = CreateFrame("Frame", nil, scSwatch)
+        scBlock:SetAllPoints(); scBlock:SetFrameLevel(scSwatch:GetFrameLevel() + 10); scBlock:EnableMouse(true)
+        scBlock:SetScript("OnEnter", function()
+            EllesmereUI.ShowWidgetTooltip(scSwatch, EllesmereUI.DisabledTooltip("Item Count"))
+        end)
+        scBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+        EllesmereUI.RegisterWidgetRefresh(function()
+            if updateScSwatch then updateScSwatch() end
+            local on = BD().showItemCount ~= false
+            scSwatch:SetAlpha(on and 1 or 0.3)
+            if on then scBlock:Hide() else scBlock:Show() end
+        end)
+        local on = BD().showItemCount ~= false
+        scSwatch:SetAlpha(on and 1 or 0.3)
+        if on then scBlock:Hide() else scBlock:Show() end
     end
 
     -- Suppress GCD (CD/utility bars only) | Pixel Glow Thickness (+ cog: Lines/Speed)
@@ -3117,7 +3116,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         -- Inline cog on Pixel Glow Thickness: Lines + Speed
         if not EllesmereUI._prebuilding then
             local rightRgn = sgcdRow._rightRegion
-            EllesmereUI.BuildInlineCog(rightRgn, { icon = EllesmereUI.RESIZE_ICON,
+            EllesmereUI.BuildInlineCog(rightRgn, {
                 title = "Pixel Glow",
                 rows = {
                     { type="slider", label="Lines", min=2, max=16, step=1,
@@ -3175,7 +3174,7 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
         -- Inline cog on Pixel Glow Thickness: Lines + Speed (buffGlow* vars)
         if not EllesmereUI._prebuilding then
             local leftRgn = pgRow._leftRegion
-            EllesmereUI.BuildInlineCog(leftRgn, { icon = EllesmereUI.RESIZE_ICON,
+            EllesmereUI.BuildInlineCog(leftRgn, {
                 title = "Pixel Glow",
                 rows = {
                     { type="slider", label="Lines", min=2, max=16, step=1,
@@ -3291,14 +3290,17 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
 
     -- Pandemic Glow: the Glows page's descriptor over this bar, with the
     -- preview and the Pixel Glow cog inline and the swatches in the right half.
+    -- WoW Forever: the same row is the Anti-Clip Glow (EUI_CDM_ForeverAntiClip.lua).
     do
         local GO = EllesmereUI.GlowOptions
+        local antiClip = ns.CDM_ANTI_CLIP
         local panDesc = ns._CDM_PandemicGlowDesc(BD, function() ns.BuildAllCDMBars(); Refresh() end)
         local panGlowRow
         panGlowRow, h = W:DualRow(parent, y,
-            GO.DropdownSpec(panDesc, "Pandemic Glow",
-                "Show a glow on icons when the remaining duration is in the pandemic window (last 30%)"),
-            { type="label", text="Pandemic Glow Color" });  y = y - h
+            GO.DropdownSpec(panDesc, antiClip and "Anti-Clip Glow" or "Pandemic Glow",
+                antiClip and "Show a glow on icons when casting the spell next, after your current cast or global cooldown, won't clip it"
+                    or "Show a glow on icons when the remaining duration is in the pandemic window (last 30%)"),
+            { type="label", text = antiClip and "Anti-Clip Glow Color" or "Pandemic Glow Color" });  y = y - h
 
         if not EllesmereUI._prebuilding then
             local leftRgn = panGlowRow._leftRegion
@@ -3308,7 +3310,8 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
             if EllesmereUI.BuildSyncIcon and EllesmereUI.ApplyPandemicGlowToAll then
                 EllesmereUI.BuildSyncIcon({
                     region = panGlowRow._leftRegion,
-                    tooltip = "Apply this pandemic glow to Nameplates, all CDM bars, and tracking bars. A surface that can't show a style uses its closest match.",
+                    tooltip = antiClip and "Apply this glow's look to the Nameplates Pandemic Glow, all CDM bars, and tracking bars. A surface that can't show a style uses its closest match."
+                        or "Apply this pandemic glow to Nameplates, all CDM bars, and tracking bars. A surface that can't show a style uses its closest match.",
                     isSynced = function()
                         return EllesmereUI.IsPandemicGlowSyncedToAll(EllesmereUI.PandemicPayloadFromCdmBar(BD()), { skipCdmKey = barKey })
                     end,
@@ -3594,35 +3597,14 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
               BD().barStrata = v
               ns.BuildAllCDMBars(); Refresh()
           end }
-    -- WoW Forever has no combat potion presets, so the swap toggle is not
-    -- built there and Bar Strata opens the glow rows below instead.
-    if not EllesmereUI.IS_FOREVER then
-    _, h = W:DualRow(parent, y,
-        strataCfg,
-        -- Profile-wide (one switch covers the Light's Potential, Recklessness
-        -- and Liquid Luster presets on every CD/utility bar): a pot preset
-        -- whose own family is fully out of bags swaps its icon/count/cooldown
-        -- to the best pot of the partner families instead of sitting greyed
-        -- (Liquid Luster is the final fallback for the other two).
-        { type = "toggle", text = "Swap Combat Potions When Missing",
-          tooltip = "When your bags have none of one combat potion type, its icon swaps to track the next type you own.",
-          getValue = function()
-              local p = DB(); return p and p.cdmBars and p.cdmBars.swapPotionsWhenMissing == true
-          end,
-          setValue = function(v)
-              local p = DB()
-              if p and p.cdmBars then
-                  p.cdmBars.swapPotionsWhenMissing = v
-                  if ns._BumpPotResolveGen then ns._BumpPotResolveGen() end
-                  if ns.FullCDMRebuild then ns.FullCDMRebuild("pot_swap_toggle") end
-              end
-          end });  y = y - h
-    end -- not IS_FOREVER
+    -- Bar Strata opens the rows below. (Swap Combat Potions When Missing, once
+    -- beside it, is a per-icon setting now: each Combat Potion icon's menu,
+    -- Combat Potion Icon; an icon that never set its own still reads the old
+    -- profile-wide switch.)
 
     -- Global, not per-bar: one gate for every glow the Cooldown Manager
-    -- draws, hence the label. Same hosting trick as Hide Items if Missing
-    -- above -- it takes the cooldown edge row's free slot where that row
-    -- exists, and closes the section on its own for buff-family bars.
+    -- draws, hence the label. Beside Bar Strata on buff-family bars; on
+    -- cooldown/utility bars it leads the row under the cooldown edge row.
     local glowCombatCfg = { type="toggle", text="Show Glows Only in Combat (global)",
           tooltip = "Hide every Cooldown Manager glow out of combat and bring them all back the moment you enter combat.",
           getValue=function()
@@ -3651,9 +3633,10 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
               EllesmereUI:RefreshPage()
           end }
 
-    -- Cooldown/utility bars only: buff bars have no cooldown edge.
-    -- WoW Forever: Bar Strata takes the first slot here and every later
-    -- toggle moves up one, closing with Show Non-On Use Trinkets.
+    -- Cooldown/utility bars only: buff bars have no cooldown edge. Bar Strata
+    -- takes the first slot here and every later toggle moves up one; WoW
+    -- Forever closes with Show Non-On Use Trinkets (retail places it beside
+    -- Show Rotation Helper above).
     if barData.barType == "cooldowns" or barData.barType == "utility" then
     local edgeCfg = { type="toggle", text="Always Show Cooldown Edge",
           tooltip="Show the rotating cooldown edge on every cooldown in this bar, not just while a charge is recharging. Hide Recharge Edge still overrides this for individual charge spells.",
@@ -3662,18 +3645,16 @@ local function BuildCDMBarsPage(pageName, parent, yOffset)
               BD().showCooldownEdge = v and true or nil
               ns.BuildAllCDMBars(); Refresh()
           end }
+    _, h = W:DualRow(parent, y, strataCfg, edgeCfg);  y = y - h
     if EllesmereUI.IS_FOREVER then
-        _, h = W:DualRow(parent, y, strataCfg, edgeCfg);  y = y - h
         _, h = W:DualRow(parent, y, glowCombatCfg, trinketCfg);  y = y - h
     else
-        _, h = W:DualRow(parent, y, edgeCfg, glowCombatCfg);  y = y - h
+        _, h = W:DualRow(parent, y, glowCombatCfg, EllesmereUI.BlankRowCfg());  y = y - h
     end
     else
+    _, h = W:DualRow(parent, y, strataCfg, glowCombatCfg);  y = y - h
     if EllesmereUI.IS_FOREVER then
-        _, h = W:DualRow(parent, y, strataCfg, glowCombatCfg);  y = y - h
         _, h = W:DualRow(parent, y, trinketCfg, EllesmereUI.BlankRowCfg());  y = y - h
-    else
-        _, h = W:DualRow(parent, y, glowCombatCfg, EllesmereUI.BlankRowCfg());  y = y - h
     end
     end
 

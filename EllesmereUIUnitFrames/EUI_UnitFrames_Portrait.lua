@@ -22,6 +22,17 @@ local GetSettingsForUnit, UnitToSettingsKey = I.GetSettingsForUnit, I.UnitToSett
 local db
 I.dbSetters[#I.dbSetters + 1] = function(v) db = v end
 
+-- True while the game withholds this unit's identity (inside instances: a
+-- unit that is neither player-controlled nor in the group). A model refuses
+-- such a unit (PlayerModel:SetUnit needs the identity), so the 3D lanes
+-- stand down for it. An answer that cannot be read counts as withheld.
+local ShouldUnitIdentityBeSecret = C_Secrets and C_Secrets.ShouldUnitIdentityBeSecret
+local function IdentityHidden(unit)
+    if not ShouldUnitIdentityBeSecret then return false end
+    local hidden = ShouldUnitIdentityBeSecret(unit)
+    return issecretvalue(hidden) or hidden == true
+end
+
 local UF_ICONS_PATH = "Interface\\AddOns\\EllesmereUI\\media\\icons\\"
 local CLASS_FULL_SPRITE_BASE = UF_ICONS_PATH .. "class-full\\"
 local CLASS_FULL_COORDS = EllesmereUI.CLASS_ICON_SPRITE_COORDS
@@ -181,6 +192,9 @@ do
         Resolve(model, key)
     end
     function ns.UF_CanMirrorPortrait2D(model, unit, onReady)
+        -- No model for a unit whose identity is withheld: its portrait stays
+        -- unflipped, and the model is left as it is.
+        if IdentityHidden(unit) then return false end
         -- IDs may be secret: only type() and issecretvalue() ever test them.
         local guid = UnitGUID(unit)
         local key = (not issecretvalue(guid)) and guid or nil
@@ -251,6 +265,24 @@ end
 -- runs only after a real repaint: 2D heals what SetPortraitTexture resets, 3D
 -- re-applies zoom after SetUnit -- nothing to heal without a repaint.
 -- fallback: the class lane's resolved non-player fallback, when the painter has it.
+-- A model mirrors its frame's alpha by hand; the mirrored value is kept so a
+-- UIParent fade (EllesmereUI.UIScaledAlpha) can scale it again on change.
+do
+    local mirrored = setmetatable({}, { __mode = "k" })
+    local listening = false
+    local function Reapply()
+        for m, a in pairs(mirrored) do m:SetAlpha(EllesmereUI.UIScaledAlpha(a)) end
+    end
+    function ns.UF_SetModelAlpha(model, a)
+        mirrored[model] = a
+        if not listening then
+            listening = true
+            EllesmereUI.OnUIAlphaChanged(Reapply)
+        end
+        model:SetAlpha(EllesmereUI.UIScaledAlpha(a))
+    end
+end
+
 local PortraitOverride  -- forward declaration; painter registrations below the definition
 local SwapPortraitMode  -- forward declaration; the portrait painter swaps through it
 function PortraitOverride(self, event, evtUnit, fallback)
@@ -319,21 +351,36 @@ function PortraitOverride(self, event, evtUnit, fallback)
     end
     if hasStateChanged then
         if isModel then
-            if not isAvailable then
-                element:SetCamDistanceScale(0.25)
-                element:SetPortraitZoom(0)
-                element:SetPosition(0, 0, 0.25)
+            -- A model refuses a unit whose identity the game withholds (an
+            -- enemy inside an instance), and the refused call leaves nothing
+            -- to draw: that unit's 2D portrait stands in on the backdrop's 2D
+            -- texture, and the model comes back with the next unit it can show.
+            local stand = element.backdrop and element.backdrop._2d
+            if stand and isAvailable and IdentityHidden(u) then
                 element:ClearModel()
-                element:SetModel([[Interface\Buttons\TalkToMeQuestionMark.m2]])
+                element:Hide()
+                SetPortraitTexture(stand, u, stand._blizzNoMask)
+                if stand.PostUpdate then stand:PostUpdate(u) end
+                stand:Show()
             else
-                local uKey3d = UnitToSettingsKey(self._euiBaseUnit or u)
-                local uS3d = uKey3d and db.profile[uKey3d]
-                local camScale = ((uS3d and uS3d.portrait3dZoom) or 100) / 100
-                element:ClearModel()
-                element:SetUnit(u)
-                element:SetPortraitZoom(1)
-                element:SetPosition(0, 0, 0)
-                element:SetCamDistanceScale(camScale)
+                if stand then stand:Hide() end
+                element:Show()
+                if not isAvailable then
+                    element:SetCamDistanceScale(0.25)
+                    element:SetPortraitZoom(0)
+                    element:SetPosition(0, 0, 0.25)
+                    element:ClearModel()
+                    element:SetModel([[Interface\Buttons\TalkToMeQuestionMark.m2]])
+                else
+                    local uKey3d = UnitToSettingsKey(self._euiBaseUnit or u)
+                    local uS3d = uKey3d and db.profile[uKey3d]
+                    local camScale = ((uS3d and uS3d.portrait3dZoom) or 100) / 100
+                    element:ClearModel()
+                    element:SetUnit(u)
+                    element:SetPortraitZoom(1)
+                    element:SetPosition(0, 0, 0)
+                    element:SetCamDistanceScale(camScale)
+                end
             end
         elseif element.isClass then
             -- Class sprite lane: the engine painter is the single portrait
@@ -511,6 +558,8 @@ function ns.UF_AttachEngineFrame(frame, unit, polled)
     end
     -- Opt-in Blizzard Glow Line: built and joined only when on.
     if frame.HealthPrediction then ns.UF_AbsorbGlowApply(frame, unit) end
+    -- Opt-in max health reduction: built and joined only when its style is on.
+    if frame.HealthPrediction then ns.UF_MaxHpApply(frame, unit) end
     -- The player's power value channel: joined while the frame is visible and
     -- shows the value, so it also follows the frame's show and hide.
     if unit == "player" and frame.Power then
@@ -1001,7 +1050,7 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
             -- Dark mode: always the player's own class color.
             local _, classToken = UnitClass("player")
             if classToken then
-                local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[classToken]
+                local c = EllesmereUI.GetClassColor(classToken)
                 if c then bR, bG, bB = c.r, c.g, c.b end
             end
         elseif unitToken and UnitExists(unitToken) then
@@ -1009,7 +1058,7 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
             -- for NPCs, tapped grey).
             local _, classToken = UnitClass(unitToken)
             if UnitIsPlayer(unitToken) and not issecretvalue(classToken) and classToken then
-                local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[classToken]
+                local c = EllesmereUI.GetClassColor(classToken)
                 if c then bR, bG, bB = c.r, c.g, c.b end
             elseif UnitIsTapDenied and UnitIsTapDenied(unitToken) then
                 bR, bG, bB = 0.6, 0.6, 0.6
@@ -1027,9 +1076,19 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
             -- Fallback: player class color.
             local _, classToken = UnitClass("player")
             if classToken then
-                local c = (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[classToken]
+                local c = EllesmereUI.GetClassColor(classToken)
                 if c then bR, bG, bB = c.r, c.g, c.b end
             end
+        end
+    end
+
+    -- Background fill: Detached Background color while detached, stock grey otherwise.
+    if backdrop._bg then
+        local bgc = isDetached and uSettings and uSettings.detachedPortraitBgColor
+        if bgc then
+            backdrop._bg:SetColorTexture(bgc.r, bgc.g, bgc.b, bgc.a or 1)
+        else
+            backdrop._bg:SetColorTexture(0.1, 0.1, 0.1, 1)
         end
     end
 
@@ -1203,6 +1262,15 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
 
     -- Outer Ring / Inner Shadow (round shapes); nothing built while off.
     ns.UF_PortraitExtras(backdrop, uSettings, shape)
+end
+-- Whether a frame shows its portrait, the frame layout's rule: a stock style
+-- always carries one, otherwise Portrait Mode and Show Portrait decide. An
+-- indicator set to Portrait centres on it only while it shows, never on a
+-- hidden backdrop (the options preview places them the same way).
+function ns.UF_PortraitShown(s)
+    if ns.UF_Blizz() then return true end
+    local pStyle = (s and s.portraitStyle) or db.profile.portraitStyle or "attached"
+    return pStyle ~= "none" and not (s and s.showPortrait == false)
 end
 local function CreatePortrait(frame, side, frameHeight, unit)
     local portraitHeight = frameHeight or 46
@@ -1487,7 +1555,7 @@ function SwapPortraitMode(frame, painting)
         if not bd._3d then return end
         -- A model ignores parent alpha: take the body's current fade until
         -- the visibility pass mirrors it.
-        bd._3d:SetAlpha((frame._visWrap or frame):GetAlpha())
+        ns.UF_SetModelAlpha(bd._3d, (frame._visWrap or frame):GetAlpha())
         bd._3d:Show()
         bd._3d.backdrop = bd
         bd._3d.is2D = false
@@ -1507,6 +1575,45 @@ function SwapPortraitMode(frame, painting)
     -- Repaint through the new object immediately.
     if not painting and frame.EnableElement then frame:EnableElement("Portrait") end
     ns.UF_StampPortraitForceUpdate(frame)
+end
+
+-------------------------------------------------------------------------------
+--  Detached portrait clicks: Clickable Portrait (per unit, default off) covers
+--  the detached portrait with a second unit button for the same unit
+--  (EllesmereUI.SyncPortraitClick, EllesmereUI_SharedHelpers.lua). Hover
+--  replays the unit button's own hover work (tooltip, mouseover fade-in,
+--  Hover Border).
+-------------------------------------------------------------------------------
+local PORTRAIT_CLICK = {
+    wanted = function(frame)
+        -- Only these three frames offer a detached portrait.
+        local u = frame._euiBaseUnit
+        if u ~= "player" and u ~= "target" and u ~= "focus" then return false end
+        local bd = frame.Portrait and frame.Portrait.backdrop
+        if not bd or not bd:IsShown() or ns.UF_Blizz() then return false end
+        local s = GetSettingsForUnit(u)
+        return s and s.detachedPortraitClickable
+            and (s.portraitStyle or db.profile.portraitStyle or "attached") == "detached"
+            and s.showPortrait ~= false
+    end,
+    backdrop = function(frame) return frame.Portrait.backdrop end,
+    onEnter = function(frame)
+        I.UnitFrame_OnEnter(frame)
+        I.FrameBorderEnter(frame)
+    end,
+    onLeave = function(frame)
+        I.UnitFrame_OnLeave(frame)
+        I.FrameBorderLeave(frame)
+    end,
+    -- Same registration as the unit button itself (SetupUnitMenu).
+    register = function(btn)
+        if type(ClickCastFrames) ~= "table" then ClickCastFrames = {} end
+        ClickCastFrames[btn] = true
+    end,
+}
+-- True while the frame wants its click overlay (EllesmereUI.SyncPortraitClick).
+function ns.UF_SyncPortraitClick(frame)
+    if frame and frame.Portrait then return EllesmereUI.SyncPortraitClick(frame, PORTRAIT_CLICK) end
 end
 
 I.ApplyClassIconTexture, I.ApplyDetachedPortraitShape = ApplyClassIconTexture, ApplyDetachedPortraitShape

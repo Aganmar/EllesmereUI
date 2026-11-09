@@ -159,7 +159,7 @@ local function StartAddon()
     EUI_Bags.bgOverlay:SetAllPoints()
     EUI_Bags.bgOverlay:SetColorTexture(0, 0, 0, 0.25)
 
-    if EUI and EUI.PanelPP then
+    if not ns.SkinForeverBagWindow(EUI_Bags, EUI_Bags.bg, EUI_Bags.bgOverlay, true, true) and EUI.PanelPP then
         EUI.PanelPP.CreateBorder(EUI_Bags, 0.1, 0.1, 0.1, 1, 1, "OVERLAY", 7)
     end
 
@@ -390,7 +390,9 @@ local function StartAddon()
     EUI_BagsWindow.bg = EUI_BagsWindow:CreateTexture(nil, "BACKGROUND")
     EUI_BagsWindow.bg:SetAllPoints()
     EUI_BagsWindow.bg:SetColorTexture(0.02, 0.02, 0.02, 0.95)
-    if EUI and EUI.PanelPP then EUI.PanelPP.CreateBorder(EUI_BagsWindow, 0.1, 0.1, 0.1, 1, 1, "OVERLAY", 7) end
+    if not ns.SkinForeverBagWindow(EUI_BagsWindow, EUI_BagsWindow.bg) and EUI.PanelPP then
+        EUI.PanelPP.CreateBorder(EUI_BagsWindow, 0.1, 0.1, 0.1, 1, 1, "OVERLAY", 7)
+    end
     EllesmereUI.RegisterEscapeClose(EUI_BagsWindow)
 
     EUI_BagsReagent:SetSize(320, 300)
@@ -406,7 +408,9 @@ local function StartAddon()
     EUI_BagsReagent.bg = EUI_BagsReagent:CreateTexture(nil, "BACKGROUND")
     EUI_BagsReagent.bg:SetAllPoints()
     EUI_BagsReagent.bg:SetColorTexture(0.02, 0.02, 0.02, 0.95)
-    if EUI and EUI.PanelPP then EUI.PanelPP.CreateBorder(EUI_BagsReagent, 0.1, 0.1, 0.1, 1, 1, "OVERLAY", 7) end
+    if not ns.SkinForeverBagWindow(EUI_BagsReagent, EUI_BagsReagent.bg, nil, true, true) and EUI.PanelPP then
+        EUI.PanelPP.CreateBorder(EUI_BagsReagent, 0.1, 0.1, 0.1, 1, 1, "OVERLAY", 7)
+    end
 
     EUI_BagsReagent:RegisterEvent("BAG_UPDATE")
     EUI_BagsReagent:SetScript("OnEvent", function(self, event)
@@ -426,14 +430,17 @@ local function StartAddon()
     end)
 
     local OriginalToggleAllBags = ToggleAllBags
+    local function CloseBags()
+        EUI_Bags:Hide()
+        EUI_BagsReagent:Hide()
+        if not EllesmereUIDB then EllesmereUIDB = {} end
+        EllesmereUIDB.bagsVisible = false
+        -- Controller cursor: keep Blizzard's hidden bag frames closed too.
+        if EUI.PadInUse() then ns.PadReleaseBlizzBags() end
+    end
     local function ToggleEUI()
         if EUI_Bags:IsVisible() then
-            EUI_Bags:Hide()
-            EUI_BagsReagent:Hide()
-            if not EllesmereUIDB then EllesmereUIDB = {} end
-            EllesmereUIDB.bagsVisible = false
-            -- Controller cursor: keep Blizzard's hidden bag frames closed too.
-            if EUI.PadInUse() then ns.PadReleaseBlizzBags() end
+            CloseBags()
         else
             -- Controller cursor: gamepad pointer on at this user-requested
             -- open, as Blizzard's own bag toggle does (one C call when no
@@ -497,10 +504,12 @@ local function StartAddon()
     ns.ToggleBagsWithCharacterFrame()
 
     local _lastToggleTime = 0
+    local _visibleBeforeToggle = false
     local function SmartToggleBags()
         -- Debounce: Blizzard keybinds can fire both ToggleAllBags and C_Container.ToggleAllBags in the same frame, causing a double-toggle.
         if GetTime() == _lastToggleTime then return end
         _lastToggleTime = GetTime()
+        _visibleBeforeToggle = EUI_Bags:IsVisible()
         local enhancedEnabled = BP().enhancedBags ~= false
         if enhancedEnabled then ToggleEUI()
         else if OriginalToggleAllBags then OriginalToggleAllBags() end end
@@ -524,8 +533,13 @@ local function StartAddon()
     -- Hide Blizzard bag frames by reparenting to a hidden container (never write .Show/.Hide onto Blizzard frames -- causes taint).
     local _blizzBagHidden = CreateFrame("Frame")
     _blizzBagHidden:Hide()
+    -- The same rect as Blizzard's ContainerFrameContainer (all of UIParent):
+    -- UpdateContainerFrameAnchors pins the first open bag to its parent, and a
+    -- bag that opens while parented here (the keyring below) keeps that pin
+    -- after it is let out, so a rectless container left it with no position.
+    _blizzBagHidden:SetAllPoints(UIParent)
 
-    -- WoW Forever's keyring (bag -2) has no place in our bag window, so its
+    -- WoW Forever's keyring (bag -1) has no place in our bag window, so its
     -- button keeps opening Blizzard's own keyring window: the one bag frame
     -- let back out of the hidden container while it shows.
     local KEYRING = EUI.IS_FOREVER and Enum.BagIndex and Enum.BagIndex.Keyring or nil
@@ -565,9 +579,34 @@ local function StartAddon()
         SmartToggleBags()
     end)
 
-    hooksecurefunc("OpenAllBags", function()
-        if not EUI_Bags:IsVisible() then ToggleEUI() end
+    -- Window that auto-opened the bags (merchant, mail, auction house, ...)
+    local bagsOpener
+    hooksecurefunc("OpenAllBags", function(frame)
+        -- Blizzard's OpenBackpack can call ToggleBackpack first, which already
+        -- flipped our window this frame: read its state from before that.
+        local wasVisible = EUI_Bags:IsVisible()
+        if _lastToggleTime == GetTime() then wasVisible = _visibleBeforeToggle end
+        local open = wasVisible or ns.BagAutoWindowOn("bagAutoOpenWindows", ns.BagAutoWindowKey(frame))
+        if open and not EUI_Bags:IsVisible() then
+            ToggleEUI()
+        elseif not open and EUI_Bags:IsVisible() then
+            CloseBags()
+        end
+        if open and not wasVisible then bagsOpener = frame end
         KillBlizzard()
+    end)
+    -- Close with that window; frame is nil for non-window closes
+    hooksecurefunc("CloseAllBags", function(frame)
+        if not frame or frame ~= bagsOpener then return end
+        bagsOpener = nil
+        if EUI_Bags:IsShown() and ns.BagAutoWindowOn("bagAutoCloseWindows", ns.BagAutoWindowKey(frame)) then
+            CloseBags()
+        end
+    end)
+    -- Closed by hand: a later open is the player's, so it stays open.
+    -- Alt-Z also fires OnHide but leaves IsShown true.
+    EUI_Bags:HookScript("OnHide", function(self)
+        if not self:IsShown() then bagsOpener = nil end
     end)
     end -- not ns.PadUIStandDown()
 
@@ -592,8 +631,10 @@ local function StartAddon()
     end
     local function BankOpen()
         if not (C_PlayerInteractionManager and C_PlayerInteractionManager.IsInteractingWithNpcOfType) then return false end
-        return (C_PlayerInteractionManager.IsInteractingWithNpcOfType(Enum.PlayerInteractionType.Banker)
-            or C_PlayerInteractionManager.IsInteractingWithNpcOfType(Enum.PlayerInteractionType.AccountBanker)) and true or false
+        local PIT, IsAt = Enum.PlayerInteractionType, C_PlayerInteractionManager.IsInteractingWithNpcOfType
+        -- some bankers open the character bank as CharacterBanker
+        return (IsAt(PIT.Banker) or (PIT.CharacterBanker and IsAt(PIT.CharacterBanker))
+            or IsAt(PIT.AccountBanker)) and true or false
     end
 
     -- One total per item across the bags AND worn gear: equipping, taking off
@@ -803,6 +844,9 @@ local function StartAddon()
     end
     HookSendMail(_G.SendMailFrame)
 
+    -- The saved slot size before the pool is built (out of combat only): a first
+    -- bag open in combat could not resize the slots for the whole fight.
+    ns.ApplySlotMetrics()
     -- Pre-warm the secure item-button pool out of combat: a ContainerFrameItemButtonTemplate created
     -- in lockdown is tainted (UseContainerItem() blocked in M+/Delves), so build every button we could
     -- need up front and let RefreshInventory only position/show clean ones. Slots the loading-screen
@@ -917,6 +961,7 @@ local function StartAddon()
         if event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
             if interactionType == Enum.PlayerInteractionType.MailInfo
                 or interactionType == Enum.PlayerInteractionType.Banker
+                or interactionType == Enum.PlayerInteractionType.CharacterBanker
                 or interactionType == Enum.PlayerInteractionType.AccountBanker then
                 -- Same settle-window hold as the legacy branch above.
                 _snapshotReady = false
@@ -1005,6 +1050,9 @@ end
 -- runs in this frame's own handler (its own script budget); whatever it leaves is built at
 -- PLAYER_ENTERING_WORLD, still behind the loading screen, then at combat end.
 local WINDOW_WARM_MS = 40
+local function ReleaseStaleSortMute()
+    EllesmereUI.ReleaseStaleHold("Sound_EnableSFX", "EllesmereUIBags")
+end
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("PLAYER_LOGIN")
 loader:SetScript("OnEvent", function(self, event)
@@ -1014,6 +1062,15 @@ loader:SetScript("OnEvent", function(self, event)
         return
     end
     self:UnregisterEvent("PLAYER_LOGIN")
+    -- The sort's sound effects mute, when a session ended with it held (a
+    -- reload mid-sort): no sort runs at login, so it goes back, only while the
+    -- sound effects still read the mute. Out of combat (some CVars cannot
+    -- change in combat): a reload in combat waits for its end.
+    if InCombatLockdown() then
+        ns.CombatQueue.Defer("staleSortMute", ReleaseStaleSortMute)
+    else
+        ReleaseStaleSortMute()
+    end
     -- Scheduled first, so nothing in the pass below can stop the module from starting.
     C_Timer.After(0.5, function()
         StartAddon()

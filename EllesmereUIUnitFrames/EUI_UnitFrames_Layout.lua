@@ -266,6 +266,16 @@ function ns.UF_RecolorTexts(frame, unit, s)
     end
 end
 
+-- Colors changed (EllesmereUI.ApplyColorsToOUF): texts are colored once when set,
+-- so the class-colored ones repaint here with the new palette.
+EllesmereUI._UFRecolorAllTexts = function()
+    local frames = I.frames
+    if not (frames and db) then return end
+    for unit in pairs(unitSettingsKey) do
+        if frames[unit] then ns.UF_RecolorTexts(frames[unit], unit) end
+    end
+end
+
 -- Bottom text bar frame: below the health+power area, above the castbar.
 local function CreateBottomTextBar(frame, unit, settings, anchorFrame, xOffset, overrideWidth)
     local btbH = settings.bottomTextBarHeight or 16
@@ -787,9 +797,16 @@ local function GetFrameDimensions(unit, settingsOnly)
         local w = (showPortrait and isAttached) and (adjPH + settings.frameWidth) or settings.frameWidth
         return snap(w), snap(barH + btbExtra)
     elseif unit == "pet" or unit == "targettarget" or unit == "focustarget" then
-        -- A WoW Forever pet stacks its attached power bar with the health bar.
+        -- A WoW Forever pet stacks its attached power bar with the health bar,
+        -- and a shown portrait squares that stack off beside the bar
+        -- (StyleSimpleFrame), so it is part of the width here as on the other
+        -- frames: the unlock setter subtracts the same square, and a size this
+        -- reports must come back as itself through it (an override layer
+        -- banks it and hands it to the setter on every apply).
         local miniPowerH = (unit == "pet" and ns.UF_PetHasPower) and powerExtra or 0
-        return snap(settings.frameWidth), snap(settings.healthHeight + miniPowerH)
+        local barH = settings.healthHeight + miniPowerH
+        local w = showPortrait and (barH + settings.frameWidth) or settings.frameWidth
+        return snap(w), snap(barH)
     elseif unit:match("^boss") then
         local pH = powerIsAtt and (settings.powerHeight or 6) or 0
         local barH = settings.healthHeight + pH

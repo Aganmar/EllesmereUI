@@ -108,6 +108,8 @@ local function FrameBorderLeave(self)
     local portraitSeam = self._portraitSeparator
     if portraitSeam and portraitSeam:IsShown() then portraitSeam._tex:SetVertexColor(bc.r, bc.g, bc.b, ba) end
 end
+-- The detached portrait's click overlay replays these on hover (Portrait.lua).
+I.FrameBorderEnter, I.FrameBorderLeave = FrameBorderEnter, FrameBorderLeave
 
 -- Unified border for unit frames using the PP border system
 local function CreateUnifiedBorder(frame, unit)
@@ -912,6 +914,11 @@ local function StyleSimpleFrame(frame, unit)
     ApplyTextPositions(settings)
     frame._applyTextPositions = ApplyTextPositions
     if unit == "pet" then ns.UF_EnsurePetAuras(frame) end
+    -- Pet cast bar: built only while on, so it costs nothing otherwise.
+    if unit == "pet" and settings.showCastbar == true then
+        frame.Castbar = CreateCastBar(frame, unit, settings)
+        SetupShowOnCastBar(frame, unit)
+    end
 end
 
 

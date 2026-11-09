@@ -246,6 +246,17 @@ local function ApplyMinimap()
     local crop, cropMask = EBS._MapCrop(p, mapSize)
     local maskID = isCircle and 186178 or cropMask or 130937
     minimap:SetMaskTexture(maskID)
+    -- Minimap button libraries and map pins read this global to place their
+    -- buttons and pins on the map's edge; the 4:3 crop keeps square corners.
+    -- Leave a definition another addon made alone.
+    if GetMinimapShape == nil or GetMinimapShape == EBS._shapeFn then
+        local mapShapeName = isCircle and "ROUND" or "SQUARE"
+        if EBS._shapeName ~= mapShapeName then
+            EBS._shapeName = mapShapeName
+            EBS._shapeFn = function() return mapShapeName end
+            GetMinimapShape = EBS._shapeFn
+        end
+    end
     minimap:SetHitRectInsets(0, 0, crop, crop)
     if crop > 0 and not GetFFD(minimap).layoutFrame then
         local layout = CreateFrame("Frame", nil, UIParent)
@@ -513,15 +524,14 @@ local function ApplyMinimap()
     -- Shape changes do not fire a zone event. Reuse the existing housing detector
     -- so atlas/texture selection follows the new shape immediately.
     if GetFFD(minimap).checkHousing then GetFFD(minimap).checkHousing() end
-    -- Clamp to the visible shape. A cropped map keeps a square native canvas,
-    -- so allow only its hidden top/bottom strips beyond the screen bounds.
+    -- Clamp to the screen, a cropped map's whole square canvas included: the engine
+    -- keeps the canvas's terrain on screen, so a canvas whose hidden strip passes the
+    -- top or bottom edge slides its terrain inside the frame and leaves a strip with
+    -- no map at that edge. A cropped map therefore stops that strip short of the top
+    -- and bottom edges; the Unlock Mode box follows the canvas there.
     minimap:SetClampedToScreen(true)
-    if crop > 0 then
-        minimap:SetClampRectInsets(0, 0, -crop, crop)
-    else
-        local bInset = isCircle and (p.borderSize or 1) or 0
-        minimap:SetClampRectInsets(-bInset, bInset, bInset, -bInset)
-    end
+    local bInset = isCircle and (p.borderSize or 1) or 0
+    minimap:SetClampRectInsets(-bInset, bInset, bInset, -bInset)
     -- Force the engine to re-render at the new size: nudge zoom, restore same frame.
     local curZoom = minimap:GetZoom()
     minimap:SetZoom(curZoom > 0 and 0 or 1)
@@ -1208,6 +1218,8 @@ local function ApplyMinimap()
     ApplyOmniumFolio()
     EBS._ApplyAddonCompartment()
     EBS._ApplyExternalEventButton()
+    -- Elements linked to the minimap follow a change of its insets.
+    EBS._NotifyMinimapExtent()
 end
 
 -- Blizzard's external event button (a link to an event outside the game,

@@ -91,9 +91,11 @@ every other module that can't be overridden.
 
 ## Reference
 
-`EllesmereUI.PLUGIN_API_VERSION` is `3`. The API only ever grows; existing
+`EllesmereUI.PLUGIN_API_VERSION` is `5`. The API only ever grows; existing
 functions and fields will not change. Version 2 added
-`EllesmereUI.GetCDMIconsForSpell`, version 3 `EllesmereUI.RequestCDMRepopulate`.
+`EllesmereUI.GetCDMIconsForSpell`, version 3 `EllesmereUI.RequestCDMRepopulate`,
+version 4 `EllesmereUI.GetCDMRepopulateStatus`, version 5
+`EllesmereUI.RegisterQuestTrackerRow` and `EllesmereUI.RefreshQuestTrackerRows`.
 
 ### `EllesmereUI.RegisterPlugin(id, spec)` -> `boolean`
 
@@ -202,20 +204,28 @@ Cooldown Manager keeps its own arrangement of Blizzard's spells, so a Blizzard
 layout imported or switched to later is not mirrored onto EUI's bars by
 itself. This queues the work of the **Repopulate from Blizzard CDM** button:
 EUI's bars drop every spell that came from Blizzard's Cooldown Manager (the
-spells a player added in EUI, their racial, trinkets and presets stay) and
-are filled again from the active Blizzard layout.
+spells a player added in EUI, trinkets and presets stay) and are filled again
+from the active Blizzard layout.
+
+The character's racial is placed as well. Blood Fury and Berserking go to the
+end of the Cooldowns bar; Will of the Forsaken, War Stomp, Will to Survive,
+Stoneform, Shadowmeld, Escape Artist, Read Ley Line and Skysight go to the end
+of the Utility bar. Any other racial goes where your Blizzard layout puts it,
+and if the layout doesn't track it, it stays where the EUI profile had it.
 
 `specIDs` is optional: one spec ID or a list of them, as the game reports them
 (`C_SpecializationInfo.GetSpecializationInfo`); leave it out for every spec of
 the player's class. The request is kept for the current character only. Each
 requested spec is repopulated the next time it is active, once Blizzard's
-Cooldown Manager has finished building its icons after a login, reload or spec
-change, and never during combat (it waits for combat to end). Returns `true`
-once queued, `false` when nothing valid was given.
+Cooldown Manager has loaded its saved layouts and finished building its icons
+after a login, reload or spec change, and never during combat (it waits for
+combat to end). Returns `true` once queued, `false` when nothing valid was
+given.
 
 Call it after your installer has written and activated its Blizzard layouts,
-right before your own `ReloadUI()`. The function exists only while the Cooldown
-Manager module is loaded, so test for it first:
+right before your own `ReloadUI()`: the bars are filled from whichever Blizzard
+layout is active when the repopulate runs. The function exists only while the
+Cooldown Manager module is loaded, so test for it first:
 
 ```lua
 -- after importing and activating the Blizzard Cooldown Manager layouts
@@ -223,6 +233,91 @@ if EllesmereUI.RequestCDMRepopulate then
     EllesmereUI.RequestCDMRepopulate()   -- every spec of this class
 end
 ReloadUI()
+```
+
+### `EllesmereUI.GetCDMRepopulateStatus([specID])` -> `status, time, layoutID`
+
+How a repopulate you queued with `EllesmereUI.RequestCDMRepopulate` went, for
+the current character. `specID` is optional: a spec ID as the game reports it,
+or leave it out for the character's current spec. It returns:
+
+- `"pending"` while the request is still queued: that spec has not been active
+  and settled since you asked, or Blizzard has not loaded its saved layouts
+  yet, or combat is holding it.
+- `"done", time, layoutID` once the queued repopulate has finished. `time` is
+  when it ran (`time()`), and `layoutID` is the Blizzard Cooldown Manager
+  layout that was active then, the one EUI's bars were filled from (`nil` when
+  no saved layout was active). The record stays until your next request for
+  that spec.
+- `nil` when nothing was requested for that spec, or the run did not finish.
+
+After your reload the repopulate runs a moment after login, once Blizzard has
+loaded its layouts and built its icons, so check later than `PLAYER_LOGIN`
+(for example when your installer's window opens again):
+
+```lua
+if EllesmereUI.GetCDMRepopulateStatus then
+    local status, ranAt, layoutID = EllesmereUI.GetCDMRepopulateStatus()
+    if status == "done" and layoutID == myLayoutID then
+        -- EUI's bars were filled from your layout
+    end
+end
+```
+
+### `EllesmereUI.RegisterQuestTrackerRow(id, fn [, width])` -> `boolean`
+
+WoW Forever only. Adds your own icons or buttons to the quest rows of EUI's
+Custom Quest Tracker, the way addons decorate Blizzard's tracker. The custom
+tracker draws its own rows, so hooks on Blizzard's tracker never reach it;
+register here as well.
+
+- `id`: your addon's folder name. One registration per id.
+- `fn(slot, questID, title)`: runs for every quest title row each time the
+  tracker redraws.
+  - `slot` is a frame of your own at the right end of that row's title
+    (titles are left-aligned, so a short one leaves a gap before it),
+    `width` wide and as tall as the title. Put your icons and buttons on it
+    (create them once, keyed by `slot`). It hides when the row stops showing
+    a quest, and is reused for other quests, so set everything from
+    `questID` on each call. Never put a secure (protected) frame on it, such
+    as a `SecureActionButtonTemplate` button: the tracker moves and hides its
+    rows in combat, which a protected child would block.
+  - `title` is the row's title FontString, for reading its font, color or
+    text width. Read-only: don't change it.
+- `width`: pixels kept free right of the title for your slot, 0 to 64,
+  default 0. With 0 the slot has no width; anchor to its left edge to draw
+  past the title anyway (over anything to its right).
+
+Returns `true` on success, `false` for a bad argument or a taken `id`. An
+error in `fn` goes to the error handler and does not stop the tracker. Keep
+`fn` cheap: it runs for every row on every redraw.
+
+The tracker redraws on quest log, watch and settings changes. When your own
+state changes, call `EllesmereUI.RefreshQuestTrackerRows()` to redraw it.
+
+Both functions exist only on WoW Forever with the Quest Tracker module
+loaded, so test for them first. Your addon can load before that module:
+register at `PLAYER_LOGIN`, or list `EllesmereUIQuestTracker` in your TOC's
+`## OptionalDeps`. Your callback only runs while the user has the Custom
+Quest Tracker on; Blizzard's tracker is used otherwise.
+
+```lua
+if EllesmereUI and EllesmereUI.RegisterQuestTrackerRow then
+    local buttons = {}
+    EllesmereUI.RegisterQuestTrackerRow("MyAddon", function(slot, questID, title)
+        local b = buttons[slot]
+        if not b then
+            b = CreateFrame("Button", nil, slot)
+            b:SetSize(14, 14)
+            b:SetPoint("TOPRIGHT")
+            b:SetNormalTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
+            b:SetScript("OnClick", function(self) MyAddon:Play(self.questID) end)
+            buttons[slot] = b
+        end
+        b.questID = questID
+        b:SetShown(MyAddon:HasAudio(questID))
+    end, 16)
+end
 ```
 
 ## Building pages

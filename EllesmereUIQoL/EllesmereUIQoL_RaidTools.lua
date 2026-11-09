@@ -383,10 +383,12 @@ local COLLAPSE_SNIPPET = [[
 -- these panels would be the only ones in the suite ignoring the Global Font setting.
 local FONT_KEY = "extras"      -- QoL's key in EllesmereUI._addonKeyToFolder
 local fontOwners = {}          -- filled at build: shells + holders
-local function TrackFont(owner, fs, size)
+-- family: a font family string (a text that shows players' names), which takes
+-- every font through SetFontFamily, never a plain SetFont
+local function TrackFont(owner, fs, size, family)
     local t = owner._fonts
     if not t then t = {}; owner._fonts = t end
-    t[#t + 1] = { fs = fs, size = size }
+    t[#t + 1] = { fs = fs, size = size, family = family }
     return fs
 end
 local function ApplyFonts()
@@ -396,8 +398,12 @@ local function ApplyFonts()
         local t = owner._fonts
         if t then
             for _, e in ipairs(t) do
-                local _, _, flags = e.fs:GetFont()
-                e.fs:SetFont(path, e.size, flags or "")
+                if e.family then
+                    EllesmereUI.SetFontFamily(e.fs, path, e.size, "", false)
+                else
+                    local _, _, flags = e.fs:GetFont()
+                    e.fs:SetFont(path, e.size, flags or "")
+                end
             end
         end
     end
@@ -482,6 +488,7 @@ local DB_DEFAULTS = {
         buffCheckOnReady     = true,
         buffCheckOnlyMissing = true,
         buffCheckRuneRequired = true,
+        buffCheckVantusRequired = false,
         -- Opt-in Buff Check group button (needs buffCheck).
         showBuffCheck = false,
         -- Per-section: pos[key] = { point, relPoint, x, y }
@@ -713,6 +720,35 @@ local function IsLeader()
     if not IsInGroup() then return true end
     return UnitIsGroupLeader("player")
 end
+
+-- The Raid Buff Check window (EllesmereUIQoL_RaidBuffCheck.lua) wears these panels'
+-- dress and font. Text: a font string on parent in the QoL font, kept current by
+-- ApplyFonts through owner (registered with AddFontOwner).
+ns.RT = {
+    TOPBAR_H = TOPBAR_H,
+    SkinPanelBg = SkinPanelBg,
+    SkinPanelBorder = SkinPanelBorder,
+    SkinButtonChrome = SkinButtonChrome,
+    HasAssist = HasAssist,
+    AddFontOwner = function(owner) fontOwners[#fontOwners + 1] = owner end,
+    Text = function(owner, parent, size, r, g, b)
+        local fs = TrackFont(owner, EllesmereUI.MakeFont(parent, size, nil, r, g, b), size)
+        local path = EllesmereUI.GetFontPath(FONT_KEY)
+        if path then
+            local _, _, flags = fs:GetFont()
+            fs:SetFont(path, size, flags or "")
+        end
+        return fs
+    end,
+    -- Text for a player's name: the same font as a font family, which draws the
+    -- scripts the font lacks (no outline, no shadow, as Text has)
+    NameText = function(owner, parent, size, r, g, b)
+        local fs = TrackFont(owner, parent:CreateFontString(nil, "OVERLAY"), size, true)
+        EllesmereUI.SetFontFamily(fs, EllesmereUI.GetFontPath(FONT_KEY) or EllesmereUI.EXPRESSWAY, size, "", false)
+        if r then fs:SetTextColor(r, g, b, 1) end
+        return fs
+    end,
+}
 
 -- In a RAID, every control on the panel needs leader or assist: ready check,
 -- role check, the countdown, convert, disband and the marker buttons are all
