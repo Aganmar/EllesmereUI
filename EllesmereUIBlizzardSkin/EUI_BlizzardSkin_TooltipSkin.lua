@@ -744,7 +744,7 @@ local FFD, GetFFD = I.FFD, I.GetFFD
     local function _ttLineColors(tt, data, unit, cc)
         local db = EllesmereUIDB
         if not (db and (db.tooltipLevelColor or db.tooltipClassLineColor or db.tooltipFactionColor
-            or db.tooltipGuildmateColor or db.tooltipCompactLevel)) then return end
+            or db.tooltipGuildmateColor or db.tooltipCompactLevel or db.tooltipShowRarity)) then return end
         local guildName = unit and GetGuildInfo(unit)
         if guildName and _isSecret and _isSecret(guildName) then guildName = nil end
         local nLines = tt.NumLines and tt:NumLines() or 0
@@ -797,9 +797,15 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                 if not secret then compact = table.concat(parts, " ") end
             end
         end
+        -- Rare label on the stock line; Compact Level already shows it.
+        local rarity
+        if levelIdx and unit and db.tooltipShowRarity and not compact then
+            local c = UnitClassification(unit)
+            if not (_isSecret and _isSecret(c)) and (c == "rare" or c == "rareelite") then rarity = _CLASSIFICATION[c] end
+        end
         local doClass = levelIdx and unit and cc and db.tooltipClassLineColor
         local guildColor = guildName and db.tooltipGuildmateColor and UnitIsInMyGuild(unit) and ChatTypeInfo.GUILD
-        if not (hex or compact or doClass or guildColor or db.tooltipFactionColor) then return end
+        if not (hex or compact or rarity or doClass or guildColor or db.tooltipFactionColor) then return end
         for i = 2, nLines do
             local line = _G["GameTooltipTextLeft" .. i]
             local text = line and line:GetText()
@@ -809,10 +815,24 @@ local FFD, GetFFD = I.FFD, I.GetFFD
                     -- another addon already colored.
                     if compact then
                         line:SetText(compact)
-                    elseif hex and not string.find(text, "|c", 1, true) then
-                        local newText, n = text:gsub("%d+", hex, 1)
-                        if n == 0 then newText, n = text:gsub("%?%?", hex, 1) end
-                        if n > 0 then line:SetText(newText) end
+                    else
+                        local newText = text
+                        if hex and not string.find(text, "|c", 1, true) then
+                            local n
+                            newText, n = text:gsub("%d+", hex, 1)
+                            if n == 0 then newText = text:gsub("%?%?", hex, 1) end
+                        end
+                        if rarity then
+                            -- "(Elite)" becomes "(Rare Elite)"; a plain rare gains "(Rare)".
+                            local label = rarity[2]:WrapTextInColorCode(rarity[1])
+                            local s, e = newText:find("(" .. ELITE .. ")", 1, true)
+                            if s then
+                                newText = newText:sub(1, s) .. label .. newText:sub(e)
+                            else
+                                newText = newText .. " (" .. label .. ")"
+                            end
+                        end
+                        if newText ~= text then line:SetText(newText) end
                     end
                 elseif guildColor and (not levelIdx or i < levelIdx) and _isGuildText(text, guildName) then
                     line:SetTextColor(guildColor.r, guildColor.g, guildColor.b)
