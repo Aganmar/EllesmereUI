@@ -2099,7 +2099,8 @@ end
 -- friendsFramePos (dragged panel positions, resolution- bound), tooltipFixedPos (stale
 -- account key; the live one is per-profile and rides the profile itself),
 -- blizzWindowModernBG (dead key, read nowhere), mailAltRoster / mailAltHidden (the
--- player's own characters and which of them the Mail card's Alt List leaves out).
+-- player's own characters and which of them the Mail card's Alt List leaves out),
+-- mailAltFriends (the friends' characters it has seen), mailAltListTab (its shown tab).
 -------------------------------------------------------------------------------
 local BLIZZ_SKIN_GLOBAL_KEYS = {}
 do
@@ -2453,19 +2454,25 @@ end
 --    qolUpgradeCalcChars  Upgrade Calculator per-character cache
 --    xpBarChars           XP bar session clock, XP rate and time this level
 --    timePlayedChars      Time Played block: each character's total played time
+--    travelHearths        Travel block's Show Other Characters: each character's
+--                         hearthstone bind and ready time
 --    questWatchChars      WoW Forever quest tools: quests each character's
 --                         filters and auto-track moved
 --    questTrackerChars    WoW Forever Custom Quest Tracker: each character's
 --                         untracked, collapsed, opened and pinned quests
 --    mailAltRoster        the Mail card's Alt List: every character recorded
 --    mailAltHidden        and the ones its Shown Characters leaves out
+--    mailAltFriends       and the Battle.net friends' characters it has seen
 --    raidHoroscope        Party Mode's Should I Raid Tonight?: each
 --                         character's birthday
 --    cdmCachedBarSizes    Cooldown Manager bar sizes cached per character
 --    bagCurrencyByChar    Bags' tracked currencies per character
+--    bagPinnedByChar      Bags' pinned items per character
 --    mageArmorByChar      AuraBuff Reminders (WoW Forever): the mage armor
 --                         each character last had up
 --    classBuffByChar      and the class buff lines each character last had up
+--    lootFeedHistory      Forever Essentials' Loot History: each character's
+--                         latest Loot Feed rows
 --    spellUprankChars     Forever Essentials' Auto Uprank Spells on Bars: the
 --                         highest spell ranks each character and pet has had
 --    global               friend groups: the groups, their order and colours,
@@ -2492,6 +2499,7 @@ local FULL_EXPORT_EXCLUDED = {
     qolUpgradeCalcChars   = true,
     xpBarChars            = true,
     timePlayedChars       = true,
+    travelHearths         = true,
     restoreOnUninstall    = true,
     gfxBackup             = true,
     friendlyPlateVisSaved = true,
@@ -2503,11 +2511,14 @@ local FULL_EXPORT_EXCLUDED = {
     cdmRepopulateDone     = true,
     mailAltRoster         = true,
     mailAltHidden         = true,
+    mailAltFriends        = true,
     raidHoroscope         = true,
     cdmCachedBarSizes     = true,
     bagCurrencyByChar     = true,
+    bagPinnedByChar       = true,
     mageArmorByChar       = true,
     classBuffByChar       = true,
+    lootFeedHistory       = true,
     spellUprankChars      = true,
     global                = true,
     cogSeen               = true,
