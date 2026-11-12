@@ -567,6 +567,7 @@ initFrame:SetScript("OnEvent", function(self)
             local EXTRA_DEFAULTS = {
                 tooltipPlayerTitles = false, tooltipItemLevel = true, tooltipMythicScore = true,
                 tooltipShowMount = false, tooltipShowGuildRank = false, tooltipShowTarget = false,
+                tooltipShowRarity = false,
                 tooltipLevelColor = false, tooltipClassLineColor = false, tooltipFactionColor = false,
                 tooltipGuildmateColor = false, tooltipCompactLevel = false, tooltipAFKTag = false,
             }
@@ -582,6 +583,8 @@ initFrame:SetScript("OnEvent", function(self)
                     { key="tooltipShowGuildRank", label="Guild Rank", lockedFn=ttReskinOff, lockedTooltip=lockTip },
                     { key="tooltipShowTarget", label="Unit Target", lockedFn=ttReskinOff, lockedTooltip=lockTip,
                       tooltip="Adds a Targeting line showing who the hovered player or NPC is targeting, in green when it's you." },
+                    { key="tooltipShowRarity", label="Rare / Rare Elite", lockedFn=ttReskinOff, lockedTooltip=lockTip,
+                      tooltip="Identifies rare and rare elite NPCs on the existing level line." },
                     { key="tooltipLevelColor", label="Level Difficulty Color", lockedFn=ttReskinOff, lockedTooltip=lockTip,
                       tooltip="Colors the level number from gray (trivial) to red (much higher than you)." },
                     { key="tooltipClassLineColor", label="Class Colored Spec", lockedFn=ttReskinOff, lockedTooltip=lockTip,
@@ -612,6 +615,9 @@ initFrame:SetScript("OnEvent", function(self)
                     else
                         EllesmereUIDB[k] = v
                         TooltipPreviewRepaint()
+                        if k == "tooltipShowRarity" then
+                            if EllesmereUI._applyTooltipUnitDetails then EllesmereUI._applyTooltipUnitDetails() end
+                        end
                     end
                 end)
             PP.Point(extrasDD, "RIGHT", lrgn, "RIGHT", -20, 0)
@@ -4516,6 +4522,8 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.tooltipShowGuildRank = nil
                 EllesmereUIDB.tooltipShowMount = nil
                 EllesmereUIDB.tooltipShowTarget = nil
+                EllesmereUIDB.tooltipShowRarity = nil
+                if EllesmereUI._applyTooltipUnitDetails then EllesmereUI._applyTooltipUnitDetails() end
                 EllesmereUIDB.tooltipLevelColor = nil
                 EllesmereUIDB.tooltipClassLineColor = nil
                 EllesmereUIDB.tooltipFactionColor = nil
